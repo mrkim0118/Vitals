@@ -1,0 +1,15 @@
+# Generated and local files
+.vs/
+.idea/
+.vscode/
+**/bin/
+**/obj/
+**/artifacts/
+**/publish/
+*.suo
+*.user
+*.csproj.user
+캡처.PNG
+.env
+.env.*
+*.log

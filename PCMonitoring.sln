@@ -1,0 +1,42 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{A082D8A5-C1D7-476D-B6EE-FBEF72DE08FE}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Monitoring.Native", "src\Monitoring.Native\Monitoring.Native.vcxproj", "{CA21E3AF-D3D8-4E53-96BC-0C46DB985408}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PCMonitoring.App", "src\PCMonitoring.App\PCMonitoring.App.csproj", "{D5862885-79D8-47FC-878A-67693DBB3BF0}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Debug|x64 = Debug|x64
+		Release|Any CPU = Release|Any CPU
+		Release|x64 = Release|x64
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{CA21E3AF-D3D8-4E53-96BC-0C46DB985408}.Debug|Any CPU.ActiveCfg = Debug|x64
+		{CA21E3AF-D3D8-4E53-96BC-0C46DB985408}.Debug|x64.ActiveCfg = Debug|x64
+		{CA21E3AF-D3D8-4E53-96BC-0C46DB985408}.Debug|x64.Build.0 = Debug|x64
+		{CA21E3AF-D3D8-4E53-96BC-0C46DB985408}.Release|Any CPU.ActiveCfg = Release|x64
+		{CA21E3AF-D3D8-4E53-96BC-0C46DB985408}.Release|x64.ActiveCfg = Release|x64
+		{CA21E3AF-D3D8-4E53-96BC-0C46DB985408}.Release|x64.Build.0 = Release|x64
+		{D5862885-79D8-47FC-878A-67693DBB3BF0}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D5862885-79D8-47FC-878A-67693DBB3BF0}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D5862885-79D8-47FC-878A-67693DBB3BF0}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{D5862885-79D8-47FC-878A-67693DBB3BF0}.Debug|x64.Build.0 = Debug|Any CPU
+		{D5862885-79D8-47FC-878A-67693DBB3BF0}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D5862885-79D8-47FC-878A-67693DBB3BF0}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D5862885-79D8-47FC-878A-67693DBB3BF0}.Release|x64.ActiveCfg = Release|Any CPU
+		{D5862885-79D8-47FC-878A-67693DBB3BF0}.Release|x64.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{CA21E3AF-D3D8-4E53-96BC-0C46DB985408} = {A082D8A5-C1D7-476D-B6EE-FBEF72DE08FE}
+		{D5862885-79D8-47FC-878A-67693DBB3BF0} = {A082D8A5-C1D7-476D-B6EE-FBEF72DE08FE}
+	EndGlobalSection
+EndGlobal

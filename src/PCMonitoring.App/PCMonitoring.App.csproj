@@ -1,0 +1,52 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWindowsForms>true</UseWindowsForms>
+    <PlatformTarget>x64</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+    <StartupObject>PCMonitoring.App.Program</StartupObject>
+    <Company>TechArchive</Company>
+    <Authors>TechArchive</Authors>
+    <Product>TechArchive PC Monitoring</Product>
+    <AssemblyTitle>TechArchive PC Monitoring</AssemblyTitle>
+    <Description>TechArchive real-time PC resource monitoring tool.</Description>
+    <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <NativeProjectPath>..\Monitoring.Native\Monitoring.Native.vcxproj</NativeProjectPath>
+    <NativeBuildConfiguration Condition="'$(Configuration)' == ''">Debug</NativeBuildConfiguration>
+    <NativeBuildConfiguration Condition="'$(Configuration)' != ''">$(Configuration)</NativeBuildConfiguration>
+    <VisualStudioMsBuildPath Condition="Exists('C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\MSBuild.exe')">C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\MSBuild.exe</VisualStudioMsBuildPath>
+    <NativeOutputPath>$(MSBuildProjectDirectory)\..\..\artifacts\native\$(NativeBuildConfiguration)\Monitoring.Native.dll</NativeOutputPath>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+    <CopyOutputSymbolsToPublishDirectory>false</CopyOutputSymbolsToPublishDirectory>
+    <SatelliteResourceLanguages>en;ko</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="LibreHardwareMonitorLib" Version="0.9.5-pre572" />
+    <PackageReference Include="Velopack" Version="0.0.1298" />
+  </ItemGroup>
+
+  <Target Name="BuildNativeCollector" BeforeTargets="BeforeBuild" Condition="Exists('$(NativeProjectPath)') and Exists('$(VisualStudioMsBuildPath)')">
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\..\..\scripts\build-native.ps1&quot; -MsBuildPath &quot;$(VisualStudioMsBuildPath)&quot; -ProjectPath &quot;$(NativeProjectPath)&quot; -Configuration &quot;$(NativeBuildConfiguration)&quot;" />
+  </Target>
+
+  <Target Name="CopyNativeCollectorToBuildOutput" AfterTargets="Build" Condition="Exists('$(NativeOutputPath)')">
+    <Copy SourceFiles="$(NativeOutputPath)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
+  </Target>
+
+  <Target Name="CopyNativeCollectorToPublishOutput" AfterTargets="Publish" Condition="Exists('$(NativeOutputPath)') and '$(PublishDir)' != ''">
+    <Copy SourceFiles="$(NativeOutputPath)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" />
+  </Target>
+
+</Project>
