@@ -98,9 +98,12 @@ powershell -ExecutionPolicy Bypass -File .\scripts\publish-velopack.ps1 -Version
 
 이 스크립트는 다음 작업을 수행합니다.
 
-- self-contained win-x64 빌드 생성
+- .NET 8 Desktop Runtime 공유 방식의 win-x64 빌드 생성
+- 배포 패키지에서 .pdb 디버그 기호 제외
 - Velopack 설치 파일 및 업데이트 피드 생성
 - 필요하면 기본 업데이트 소스를 앱에 내장
+
+대상 PC에는 x64 .NET 8 Desktop Runtime이 설치되어 있어야 합니다.
 
 기본 출력 경로
 

@@ -110,9 +110,12 @@ powershell -ExecutionPolicy Bypass -File .\scripts\publish-velopack.ps1 -Version
 
 This script will:
 
-- publish a self-contained `win-x64` build
+- publish a framework-dependent `win-x64` build
+- exclude `.pdb` debug symbols from the release package
 - create a Velopack installer and release feed
 - optionally stamp a default update source into the build
+
+The target PC must have the x64 [.NET 8 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0) installed.
 
 Default output locations:
 

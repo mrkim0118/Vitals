@@ -115,8 +115,10 @@ Write-Host "Publishing version $Version to $publishDirPath"
 dotnet publish $projectPath `
     -c $Configuration `
     -r $Runtime `
-    --self-contained true `
+    --self-contained false `
     -o $publishDirPath `
+    -p:DebugType=None `
+    -p:DebugSymbols=false `
     -p:Version=$Version `
     -p:AssemblyVersion=$assemblyVersion `
     -p:FileVersion=$assemblyVersion `
@@ -125,6 +127,9 @@ dotnet publish $projectPath `
 if ($LASTEXITCODE -ne 0) {
     throw "dotnet publish failed."
 }
+
+# Release packages must not contain managed or native debug symbols.
+Get-ChildItem -Path $publishDirPath -Filter "*.pdb" -File -Recurse | Remove-Item -Force
 
 @{
     DefaultUpdateSource = $DefaultUpdateSource
