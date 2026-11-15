@@ -12,6 +12,8 @@
 #include <pdhmsg.h>
 #include <psapi.h>
 #include <tlhelp32.h>
+#include <evntrace.h>
+#include <evntcons.h>
 
 #include <algorithm>
 #include <cmath>
@@ -19,9 +21,11 @@
 #include <mutex>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
+#pragma comment(lib, "advapi32.lib")
 #pragma comment(lib, "iphlpapi.lib")
 #pragma comment(lib, "pdh.lib")
 #pragma comment(lib, "psapi.lib")
@@ -39,6 +43,7 @@ namespace
     struct ProcessState
     {
         uint64_t LastTotalTime100Ns = 0;
+        uint64_t LastIoBytes = 0;
     };
 
     struct MonitorState
@@ -61,6 +66,8 @@ namespace
         PDH_HCOUNTER GpuUtilizationCounter = nullptr;
         PDH_HCOUNTER GpuDedicatedMemoryCounter = nullptr;
         bool GpuCountersAvailable = false;
+        // Busiest engine per process from the last GPU sample (Task Manager's per-process GPU %).
+        std::unordered_map<uint32_t, double> GpuByProcess;
 
         NetworkState Network{};
         std::unordered_map<uint32_t, ProcessState> ProcessTimes;
@@ -71,6 +78,131 @@ namespace
 
     MonitorState g_state;
     std::mutex g_mutex;
+
+    // Per-process network bytes from ETW (Microsoft-Windows-Kernel-Network). Starting a trace session
+    // needs admin rights, so this stays off for a normal user and the UI shows N/A.
+    namespace ProcessNetwork
+    {
+        constexpr wchar_t SessionName[] = L"TechArchivePCMonitoringNet";
+        constexpr GUID KernelNetworkProvider =
+            { 0x7dd42a49, 0x5329, 0x4832, { 0x8d, 0xfd, 0x43, 0xd9, 0x79, 0x15, 0x3a, 0x88 } };
+
+        std::mutex BytesMutex;
+        std::unordered_map<uint32_t, uint64_t> BytesByProcess;
+        TRACEHANDLE Session = 0;
+        TRACEHANDLE Consumer = INVALID_PROCESSTRACE_HANDLE;
+        std::thread Worker;
+        bool Running = false;
+
+        struct SessionProperties
+        {
+            EVENT_TRACE_PROPERTIES Properties;
+            wchar_t Name[64];
+        };
+
+        SessionProperties MakeProperties()
+        {
+            SessionProperties value{};
+            value.Properties.Wnode.BufferSize = sizeof(SessionProperties);
+            value.Properties.Wnode.Flags = WNODE_FLAG_TRACED_GUID;
+            value.Properties.Wnode.ClientContext = 1; // QPC timestamps
+            value.Properties.LogFileMode = EVENT_TRACE_REAL_TIME_MODE;
+            value.Properties.BufferSize = 64;          // KB
+            value.Properties.FlushTimer = 1;           // seconds
+            value.Properties.LoggerNameOffset = offsetof(SessionProperties, Name);
+            return value;
+        }
+
+        void WINAPI OnEvent(PEVENT_RECORD record)
+        {
+            // TCP send/recv v4/v6 = 10/11/26/27, UDP = 42/43/58/59; payload starts with PID, size (both UINT32).
+            const USHORT id = record->EventHeader.EventDescriptor.Id;
+            const bool transfer = id == 10 || id == 11 || id == 26 || id == 27 ||
+                                  id == 42 || id == 43 || id == 58 || id == 59;
+            if (!transfer || record->UserDataLength < 8 ||
+                !IsEqualGUID(record->EventHeader.ProviderId, KernelNetworkProvider))
+            {
+                return;
+            }
+
+            const auto* payload = static_cast<const uint32_t*>(record->UserData);
+            std::scoped_lock lock(BytesMutex);
+            BytesByProcess[payload[0]] += payload[1];
+        }
+
+        void Start()
+        {
+            // A session left over from a crashed run would make StartTrace fail with ALREADY_EXISTS.
+            auto stale = MakeProperties();
+            ControlTraceW(0, SessionName, &stale.Properties, EVENT_TRACE_CONTROL_STOP);
+
+            auto properties = MakeProperties();
+            if (StartTraceW(&Session, SessionName, &properties.Properties) != ERROR_SUCCESS)
+            {
+                Session = 0;
+                return; // not elevated (ERROR_ACCESS_DENIED) or ETW unavailable
+            }
+
+            if (EnableTraceEx2(Session, &KernelNetworkProvider, EVENT_CONTROL_CODE_ENABLE_PROVIDER,
+                               TRACE_LEVEL_INFORMATION, 0x30 /* IPv4 | IPv6 */, 0, 0, nullptr) != ERROR_SUCCESS)
+            {
+                auto stop = MakeProperties();
+                ControlTraceW(Session, nullptr, &stop.Properties, EVENT_TRACE_CONTROL_STOP);
+                Session = 0;
+                return;
+            }
+
+            EVENT_TRACE_LOGFILEW logFile{};
+            logFile.LoggerName = const_cast<LPWSTR>(SessionName);
+            logFile.ProcessTraceMode = PROCESS_TRACE_MODE_REAL_TIME | PROCESS_TRACE_MODE_EVENT_RECORD;
+            logFile.EventRecordCallback = OnEvent;
+            Consumer = OpenTraceW(&logFile);
+            if (Consumer == INVALID_PROCESSTRACE_HANDLE)
+            {
+                auto stop = MakeProperties();
+                ControlTraceW(Session, nullptr, &stop.Properties, EVENT_TRACE_CONTROL_STOP);
+                Session = 0;
+                return;
+            }
+
+            Worker = std::thread([] { ProcessTrace(&Consumer, 1, nullptr, nullptr); });
+            Running = true;
+        }
+
+        void Stop()
+        {
+            if (Session != 0)
+            {
+                auto stop = MakeProperties();
+                ControlTraceW(Session, nullptr, &stop.Properties, EVENT_TRACE_CONTROL_STOP);
+                Session = 0;
+            }
+
+            if (Consumer != INVALID_PROCESSTRACE_HANDLE)
+            {
+                CloseTrace(Consumer); // makes ProcessTrace return
+                Consumer = INVALID_PROCESSTRACE_HANDLE;
+            }
+
+            if (Worker.joinable())
+            {
+                Worker.join();
+            }
+
+            Running = false;
+            std::scoped_lock lock(BytesMutex);
+            BytesByProcess.clear();
+        }
+
+        // Bytes per process since the previous call.
+        std::unordered_map<uint32_t, uint64_t> TakeBytes()
+        {
+            std::unordered_map<uint32_t, uint64_t> taken;
+            std::scoped_lock lock(BytesMutex);
+            taken.swap(BytesByProcess);
+            return taken;
+        }
+    }
 
     uint64_t FileTimeToUInt64(const FILETIME& fileTime)
     {
@@ -182,6 +314,7 @@ namespace
         }
 
         std::unordered_map<std::wstring, double> engineTotals;
+        g_state.GpuByProcess.clear();
         double busiest = 0.0;
         for (DWORD i = 0; i < itemCount; ++i)
         {
@@ -191,6 +324,13 @@ namespace
             }
 
             const std::wstring_view name(values[i].szName);
+            if (name.rfind(L"pid_", 0) == 0)
+            {
+                const uint32_t pid = static_cast<uint32_t>(wcstoul(values[i].szName + 4, nullptr, 10));
+                double& processBusiest = g_state.GpuByProcess[pid];
+                processBusiest = std::max(processBusiest, values[i].FmtValue.doubleValue);
+            }
+
             const size_t luid = name.find(L"luid_");
             const size_t type = name.find(L"_engtype_");
             const std::wstring key(luid == std::wstring_view::npos
@@ -459,6 +599,7 @@ int InitializeMonitor()
         return 0;
     }
 
+    ProcessNetwork::Start();
     g_state.Initialized = true;
     return 1;
 }
@@ -466,6 +607,7 @@ int InitializeMonitor()
 void ShutdownMonitor()
 {
     std::scoped_lock lock(g_mutex);
+    ProcessNetwork::Stop();
     ClosePdh();
     g_state.ProcessTimes.clear();
     g_state.Initialized = false;
@@ -525,6 +667,7 @@ int SampleTopProcesses(ProcessSnapshotNative* buffer, int capacity, int* written
 
     std::unordered_map<uint32_t, ProcessState> nextState;
     std::vector<ProcessSnapshotNative> candidates;
+    const auto networkBytes = ProcessNetwork::TakeBytes();
 
     if (Process32FirstW(snapshotHandle, &entry))
     {
@@ -547,13 +690,19 @@ int SampleTopProcesses(ProcessSnapshotNative* buffer, int capacity, int* written
             }
 
             const uint64_t totalTime = FileTimeToUInt64(kernelTime) + FileTimeToUInt64(userTime);
-            nextState[entry.th32ProcessID] = ProcessState{ totalTime };
+            // Read+write transfer bytes: file I/O including cache hits, the closest unprivileged stand-in for disk use.
+            IO_COUNTERS io{};
+            const uint64_t ioBytes = GetProcessIoCounters(processHandle, &io)
+                ? io.ReadTransferCount + io.WriteTransferCount
+                : 0;
+            nextState[entry.th32ProcessID] = ProcessState{ totalTime, ioBytes };
 
             PROCESS_MEMORY_COUNTERS_EX memoryCounters{};
             memoryCounters.cb = sizeof(memoryCounters);
             GetProcessMemoryInfo(processHandle, reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&memoryCounters), sizeof(memoryCounters));
 
             double cpuPercent = 0.0;
+            double diskBytesPerSecond = 0.0;
             const auto previous = g_state.ProcessTimes.find(entry.th32ProcessID);
             if (hasBaseline && elapsedSeconds > 0.0 && previous != g_state.ProcessTimes.end())
             {
@@ -566,15 +715,34 @@ int SampleTopProcesses(ProcessSnapshotNative* buffer, int capacity, int* written
                 {
                     cpuPercent = std::clamp((static_cast<double>(delta) / maxTime) * 100.0, 0.0, 100.0);
                 }
+
+                if (ioBytes >= previous->second.LastIoBytes)
+                {
+                    diskBytesPerSecond = static_cast<double>(ioBytes - previous->second.LastIoBytes) / elapsedSeconds;
+                }
             }
 
-            if (cpuPercent > 0.1 || memoryCounters.WorkingSetSize > (10ULL * 1024ULL * 1024ULL))
+            double networkBytesPerSecond = 0.0;
+            const auto network = networkBytes.find(entry.th32ProcessID);
+            if (hasBaseline && elapsedSeconds > 0.0 && network != networkBytes.end())
+            {
+                networkBytesPerSecond = static_cast<double>(network->second) / elapsedSeconds;
+            }
+
+            const auto gpu = g_state.GpuByProcess.find(entry.th32ProcessID);
+            const double gpuPercent = gpu == g_state.GpuByProcess.end() ? 0.0 : std::clamp(gpu->second, 0.0, 100.0);
+
+            if (cpuPercent > 0.1 || gpuPercent > 0.1 || diskBytesPerSecond > 0.0 || networkBytesPerSecond > 0.0 ||
+                memoryCounters.WorkingSetSize > (10ULL * 1024ULL * 1024ULL))
             {
                 ProcessSnapshotNative process{};
                 process.ProcessId = entry.th32ProcessID;
                 wcsncpy_s(process.Name, entry.szExeFile, _TRUNCATE);
                 process.CpuPercent = cpuPercent;
                 process.WorkingSetBytes = static_cast<uint64_t>(memoryCounters.WorkingSetSize);
+                process.GpuPercent = gpuPercent;
+                process.DiskBytesPerSecond = diskBytesPerSecond;
+                process.NetworkBytesPerSecond = networkBytesPerSecond;
                 candidates.push_back(process);
             }
 
@@ -606,4 +774,10 @@ int SampleTopProcesses(ProcessSnapshotNative* buffer, int capacity, int* written
 
     *written = count;
     return 1;
+}
+
+int IsProcessNetworkAvailable()
+{
+    std::scoped_lock lock(g_mutex);
+    return ProcessNetwork::Running ? 1 : 0;
 }

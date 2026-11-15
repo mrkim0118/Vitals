@@ -71,6 +71,9 @@ internal static class NativeMethods
 
         public double CpuPercent;
         public ulong WorkingSetBytes;
+        public double GpuPercent;
+        public double DiskBytesPerSecond;
+        public double NetworkBytesPerSecond;
     }
 
     [DllImport("Monitoring.Native.dll", CallingConvention = CallingConvention.Cdecl)]
@@ -85,7 +88,13 @@ internal static class NativeMethods
     [DllImport("Monitoring.Native.dll", CallingConvention = CallingConvention.Cdecl)]
     private static extern int SampleTopProcesses([Out] ProcessSnapshotNative[] buffer, int capacity, out int written);
 
+    [DllImport("Monitoring.Native.dll", CallingConvention = CallingConvention.Cdecl)]
+    private static extern int IsProcessNetworkAvailable();
+
     public static bool Initialize() => InitializeMonitor() == 1;
+
+    // True only when the ETW network session started, which needs admin rights.
+    public static bool ProcessNetworkAvailable => IsProcessNetworkAvailable() == 1;
 
     public static void Shutdown() => ShutdownMonitor();
 
@@ -138,7 +147,9 @@ internal static class NativeMethods
 
     public static IReadOnlyList<ProcessMetrics> TrySampleTopProcesses()
     {
-        var buffer = new ProcessSnapshotNative[5];
+        // Native already drops idle tiny processes (<0.1% CPU and <10 MB); take all the rest so the UI can sort by any column.
+        // shortcut: a PC with more than 512 such processes loses the lowest-CPU ones; raise the size if that ever matters.
+        var buffer = new ProcessSnapshotNative[512];
         if (SampleTopProcesses(buffer, buffer.Length, out var written) != 1 || written <= 0)
         {
             return Array.Empty<ProcessMetrics>();
@@ -153,6 +164,9 @@ internal static class NativeMethods
                 Name = buffer[index].Name,
                 CpuPercent = buffer[index].CpuPercent,
                 WorkingSetBytes = buffer[index].WorkingSetBytes,
+                GpuPercent = buffer[index].GpuPercent,
+                DiskBytesPerSecond = buffer[index].DiskBytesPerSecond,
+                NetworkBytesPerSecond = buffer[index].NetworkBytesPerSecond,
             });
         }
 

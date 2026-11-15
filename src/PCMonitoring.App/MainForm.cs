@@ -13,13 +13,19 @@ namespace PCMonitoring.App;
 
 public sealed class MainForm : Form
 {
-    private const int ProcessPidColumnWidth = 70;
-    private const int ProcessCpuColumnWidth = 90;
-    private const int ProcessMemoryColumnWidth = 110;
 
     private readonly MonitorRuntime _monitorRuntime = new();
     private readonly ListView _processList = new();
     private readonly TableLayoutPanel _processHeader = new();
+    private const int ProcessRowCount = 10;
+    // Width 0 for Process: it is sized to fill the remaining space.
+    private static readonly (string Title, int Width)[] ProcessColumns =
+        [("PID", 56), ("Process", 0), ("CPU %", 58), ("GPU %", 58), ("Memory", 84), ("Disk", 84), ("Network", 84)];
+    private readonly Label[] _processHeaderLabels = new Label[ProcessColumns.Length];
+    private int _processSortColumn = 2;
+    private bool _processSortDescending = true;
+    private IReadOnlyList<ProcessMetrics> _lastProcesses = [];
+    private bool _processNetworkAvailable;
     private readonly TextBox _durationTextBox = new();
     private readonly TextBox _logPathTextBox = new();
     private readonly Label _statusLabel = new();
@@ -219,19 +225,24 @@ public sealed class MainForm : Form
         processPanel.Controls.Add(processTitle);
 
         _processHeader.Dock = DockStyle.Fill;
-        _processHeader.ColumnCount = 4;
+        _processHeader.ColumnCount = ProcessColumns.Length;
         _processHeader.RowCount = 1;
         _processHeader.BackColor = Color.FromArgb(33, 49, 74);
         _processHeader.Margin = new Padding(0, 0, 0, 6);
         _processHeader.Padding = new Padding(8, 0, 8, 0);
-        _processHeader.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, ProcessPidColumnWidth));
-        _processHeader.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 220F));
-        _processHeader.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, ProcessCpuColumnWidth));
-        _processHeader.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, ProcessMemoryColumnWidth));
-        _processHeader.Controls.Add(CreateProcessHeaderLabel("PID", ContentAlignment.MiddleLeft), 0, 0);
-        _processHeader.Controls.Add(CreateProcessHeaderLabel("Process", ContentAlignment.MiddleLeft), 1, 0);
-        _processHeader.Controls.Add(CreateProcessHeaderLabel("CPU %", ContentAlignment.MiddleRight), 2, 0);
-        _processHeader.Controls.Add(CreateProcessHeaderLabel("Memory", ContentAlignment.MiddleRight), 3, 0);
+        for (var column = 0; column < ProcessColumns.Length; column++)
+        {
+            _processHeader.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, ProcessColumns[column].Width));
+            var label = CreateProcessHeaderLabel(
+                ProcessColumns[column].Title, column >= 2 ? ContentAlignment.MiddleRight : ContentAlignment.MiddleLeft);
+            var sortColumn = column;
+            label.Cursor = Cursors.Hand;
+            label.Click += (_, _) => SortProcessesBy(sortColumn);
+            _processHeaderLabels[column] = label;
+            _processHeader.Controls.Add(label, column, 0);
+        }
+
+        _processHeaderLabels[_processSortColumn].Text += " ▼";
         processLayout.Controls.Add(_processHeader, 0, 0);
 
         _processList.Dock = DockStyle.Fill;
@@ -243,16 +254,20 @@ public sealed class MainForm : Form
         _processList.BorderStyle = BorderStyle.None;
         _processList.BackColor = Color.FromArgb(15, 39, 67);
         _processList.ForeColor = Color.White;
-        _processList.Columns.Add("PID", 70, HorizontalAlignment.Left);
-        _processList.Columns.Add("Process", 220, HorizontalAlignment.Left);
-        _processList.Columns.Add("CPU %", 90, HorizontalAlignment.Right);
-        _processList.Columns.Add("Memory", 110, HorizontalAlignment.Right);
+        for (var column = 0; column < ProcessColumns.Length; column++)
+        {
+            _processList.Columns.Add(
+                ProcessColumns[column].Title,
+                ProcessColumns[column].Width,
+                column >= 2 ? HorizontalAlignment.Right : HorizontalAlignment.Left);
+        }
+
         _processList.SizeChanged += (_, _) => UpdateProcessColumnLayout();
         processLayout.Controls.Add(_processList, 0, 1);
 
-        for (var i = 0; i < 5; i++)
+        for (var i = 0; i < ProcessRowCount; i++)
         {
-            _processList.Items.Add(new ListViewItem(["-", "-", "-", "-"]));
+            _processList.Items.Add(new ListViewItem(Enumerable.Repeat("-", ProcessColumns.Length).ToArray()));
         }
 
         UpdateProcessColumnLayout();
@@ -437,6 +452,7 @@ public sealed class MainForm : Form
             return;
         }
 
+        _processNetworkAvailable = Native.NativeMethods.ProcessNetworkAvailable;
         SetModeStatus();
         _readerTask = Task.Run(ReadSnapshotsAsync);
         await Task.CompletedTask;
@@ -528,27 +544,62 @@ public sealed class MainForm : Form
         _updatedLabel.Text = $"Updated: {snapshot.Timestamp.LocalDateTime:HH:mm:ss}";
         UpdateSelfUsage();
 
-        for (var i = 0; i < 5; i++)
+        _lastProcesses = snapshot.TopProcesses;
+        RenderProcessList();
+        UpdateLogStatusDisplay();
+    }
+
+    private void SortProcessesBy(int column)
+    {
+        // Same column flips direction; a new column starts with the most useful order (largest first, names A-Z).
+        _processSortDescending = column == _processSortColumn ? !_processSortDescending : column >= 2;
+        _processSortColumn = column;
+        for (var i = 0; i < _processHeaderLabels.Length; i++)
+        {
+            var label = _processHeaderLabels[i];
+            var baseText = ProcessColumns[i].Title;
+            label.Text = i != column ? baseText : $"{baseText} {(_processSortDescending ? "▼" : "▲")}";
+        }
+
+        RenderProcessList();
+    }
+
+    private void RenderProcessList()
+    {
+        IEnumerable<ProcessMetrics> ordered = _processSortColumn switch
+        {
+            0 => _lastProcesses.OrderBy(p => p.ProcessId),
+            1 => _lastProcesses.OrderBy(p => p.Name, StringComparer.OrdinalIgnoreCase),
+            3 => _lastProcesses.OrderBy(p => p.GpuPercent).ThenBy(p => p.WorkingSetBytes),
+            4 => _lastProcesses.OrderBy(p => p.WorkingSetBytes),
+            5 => _lastProcesses.OrderBy(p => p.DiskBytesPerSecond).ThenBy(p => p.WorkingSetBytes),
+            6 => _lastProcesses.OrderBy(p => p.NetworkBytesPerSecond).ThenBy(p => p.WorkingSetBytes),
+            _ => _lastProcesses.OrderBy(p => p.CpuPercent).ThenBy(p => p.WorkingSetBytes),
+        };
+        var rows = (_processSortDescending ? ordered.Reverse() : ordered).Take(ProcessRowCount).ToList();
+
+        for (var i = 0; i < ProcessRowCount; i++)
         {
             var item = _processList.Items[i];
-            if (i < snapshot.TopProcesses.Count)
+            if (i < rows.Count)
             {
-                var process = snapshot.TopProcesses[i];
+                var process = rows[i];
                 item.SubItems[0].Text = process.ProcessId.ToString(CultureInfo.InvariantCulture);
                 item.SubItems[1].Text = process.Name;
                 item.SubItems[2].Text = process.CpuPercent.ToString("F1", CultureInfo.InvariantCulture);
-                item.SubItems[3].Text = FormatBytes(process.WorkingSetBytes);
+                item.SubItems[3].Text = process.GpuPercent.ToString("F1", CultureInfo.InvariantCulture);
+                item.SubItems[4].Text = FormatBytes(process.WorkingSetBytes);
+                item.SubItems[5].Text = FormatRate(process.DiskBytesPerSecond);
+                item.SubItems[6].Text = _processNetworkAvailable ? FormatRate(process.NetworkBytesPerSecond) : "N/A";
             }
             else
             {
-                item.SubItems[0].Text = "-";
-                item.SubItems[1].Text = "-";
-                item.SubItems[2].Text = "-";
-                item.SubItems[3].Text = "-";
+                foreach (ListViewItem.ListViewSubItem subItem in item.SubItems)
+                {
+                    subItem.Text = "-";
+                }
             }
         }
-
-        UpdateLogStatusDisplay();
     }
 
     private void StartLogging()
@@ -798,7 +849,8 @@ public sealed class MainForm : Form
 
     private void SetModeStatus()
     {
-        _statusLabel.Text = _loggingSession is null ? "Monitoring" : "Monitoring + logging";
+        _statusLabel.Text = (_loggingSession is null ? "Monitoring" : "Monitoring + logging") +
+                            (_isAdministrator ? " · Administrator" : "");
     }
 
     private void UpdateLogStatusDisplay(string? savedSessionDirectory = null)
@@ -843,6 +895,41 @@ public sealed class MainForm : Form
         // Sensors that can't be read without admin often report 0 instead of nothing.
         celsius > 0 ? $"{celsius.Value:F0} °C" : _isAdministrator ? "N/A" : "N/A (run as admin)";
 
+    private async Task RestartAsAdministratorAsync()
+    {
+        if (_loggingSession is not null)
+        {
+            var answer = MessageBox.Show(
+                this,
+                "A log is being recorded. It will be saved now and stopped before restarting.",
+                "Restart as administrator",
+                MessageBoxButtons.OKCancel,
+                MessageBoxIcon.Information);
+            if (answer != DialogResult.OK)
+            {
+                return;
+            }
+        }
+
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = Environment.ProcessPath ?? Application.ExecutablePath,
+                UseShellExecute = true,
+                Verb = "runas",
+            });
+        }
+        catch (System.ComponentModel.Win32Exception)
+        {
+            // UAC prompt declined: keep running as-is.
+            return;
+        }
+
+        await SaveLoggingSessionAsync();
+        Close();
+    }
+
     private static bool IsRunningAsAdministrator()
     {
         using var identity = System.Security.Principal.WindowsIdentity.GetCurrent();
@@ -868,20 +955,13 @@ public sealed class MainForm : Form
 
         var menu = new ContextMenuStrip();
         menu.Items.Add("Check for updates", null, async (_, _) => await CheckForUpdatesAsync(manual: true));
-        menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("Homepage", null, (_, _) => OpenExternalUrl("https://techarchive.click/"));
-        menu.Items.Add("Donate", null, (_, _) => OpenExternalUrl("https://www.paypal.com/ncp/payment/T2KAST2XQC6BS"));
+        if (!_isAdministrator)
+        {
+            menu.Items.Add("Restart as administrator (per-process network)", null, async (_, _) => await RestartAsAdministratorAsync());
+        }
+
         button.Click += (_, _) => menu.Show(button, new Point(button.Width - menu.Width, button.Height));
         return button;
-    }
-
-    private static void OpenExternalUrl(string url)
-    {
-        Process.Start(new ProcessStartInfo
-        {
-            FileName = url,
-            UseShellExecute = true,
-        });
     }
 
     // h:mm:ss with any hour count, so sessions longer than 24h are allowed.
@@ -984,28 +1064,22 @@ public sealed class MainForm : Form
 
     private void UpdateProcessColumnLayout()
     {
-        if (_processList.Columns.Count < 4 || _processHeader.ColumnStyles.Count < 4)
+        if (_processList.Columns.Count < ProcessColumns.Length || _processHeader.ColumnStyles.Count < ProcessColumns.Length)
         {
             return;
         }
 
-        var availableWidth = _processList.ClientSize.Width;
-        var fixedWidth = ProcessPidColumnWidth + ProcessCpuColumnWidth + ProcessMemoryColumnWidth;
-        var processColumnWidth = Math.Max(160, availableWidth - fixedWidth - 4);
+        // The Process name column takes whatever width the fixed columns leave.
+        var fixedWidth = ProcessColumns.Sum(column => column.Width);
+        var processColumnWidth = Math.Max(140, _processList.ClientSize.Width - fixedWidth - 4);
 
-        _processList.Columns[0].Width = ProcessPidColumnWidth;
-        _processList.Columns[1].Width = processColumnWidth;
-        _processList.Columns[2].Width = ProcessCpuColumnWidth;
-        _processList.Columns[3].Width = ProcessMemoryColumnWidth;
-
-        _processHeader.ColumnStyles[0].SizeType = SizeType.Absolute;
-        _processHeader.ColumnStyles[0].Width = ProcessPidColumnWidth;
-        _processHeader.ColumnStyles[1].SizeType = SizeType.Absolute;
-        _processHeader.ColumnStyles[1].Width = processColumnWidth;
-        _processHeader.ColumnStyles[2].SizeType = SizeType.Absolute;
-        _processHeader.ColumnStyles[2].Width = ProcessCpuColumnWidth;
-        _processHeader.ColumnStyles[3].SizeType = SizeType.Absolute;
-        _processHeader.ColumnStyles[3].Width = ProcessMemoryColumnWidth;
+        for (var column = 0; column < ProcessColumns.Length; column++)
+        {
+            var width = column == 1 ? processColumnWidth : ProcessColumns[column].Width;
+            _processList.Columns[column].Width = width;
+            _processHeader.ColumnStyles[column].SizeType = SizeType.Absolute;
+            _processHeader.ColumnStyles[column].Width = width;
+        }
     }
 
     private static string FormatClockSpeed(double megahertz)

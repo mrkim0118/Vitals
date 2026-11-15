@@ -64,9 +64,13 @@ struct ProcessSnapshotNative
     wchar_t Name[260];
     double CpuPercent;
     uint64_t WorkingSetBytes;
+    double GpuPercent;
+    double DiskBytesPerSecond;
+    double NetworkBytesPerSecond;
 };
 
 MONITORING_API int InitializeMonitor();
 MONITORING_API void ShutdownMonitor();
 MONITORING_API int SampleSystemSnapshot(SystemSnapshotNative* snapshot);
 MONITORING_API int SampleTopProcesses(ProcessSnapshotNative* buffer, int capacity, int* written);
+MONITORING_API int IsProcessNetworkAvailable();

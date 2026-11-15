@@ -44,6 +44,9 @@ public sealed class ProcessMetrics
     public required string Name { get; init; }
     public double CpuPercent { get; init; }
     public ulong WorkingSetBytes { get; init; }
+    public double GpuPercent { get; init; }
+    public double DiskBytesPerSecond { get; init; }
+    public double NetworkBytesPerSecond { get; init; }
 }
 
 public sealed class SystemSnapshot
