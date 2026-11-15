@@ -155,6 +155,7 @@ Write-Host "Packing Velopack release into $outputDirPath"
     --packTitle $PackTitle `
     --channel $Channel `
     --runtime $Runtime `
+    --framework net8.0-x64-desktop `
     --releaseNotes $releaseNotesPath `
     --outputDir $outputDirPath
 

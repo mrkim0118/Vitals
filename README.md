@@ -115,7 +115,7 @@ This script will:
 - create a Velopack installer and release feed
 - optionally stamp a default update source into the build
 
-The target PC must have the x64 [.NET 8 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0) installed.
+The app needs the x64 [.NET 8 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0). The installer and auto-update install it automatically when it is missing.
 
 Default output locations:
 
