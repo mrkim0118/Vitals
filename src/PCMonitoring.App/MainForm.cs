@@ -27,30 +27,24 @@ public sealed class MainForm : Form
     private readonly Label _loggingLabel = new();
     private readonly Button _startLoggingButton = new();
     private readonly Button _stopLoggingButton = new();
+    private readonly Button _cancelLoggingButton = new();
     private readonly Button _browseLogPathButton = new();
     private readonly Button _openLogPathButton = new();
 
-    private readonly Label _cpuPrimary = new();
-    private readonly Label _cpuSecondary = new();
-    private readonly ProgressBar _cpuBar = new();
+    private readonly MetricCard _cpuCard = new("CPU", Color.FromArgb(96, 165, 250));
+    private readonly MetricCard _memoryCard = new("Memory", Color.FromArgb(167, 139, 250));
+    private readonly MetricCard _diskCard = new("Disk (active time)", Color.FromArgb(45, 212, 191));
+    private readonly MetricCard _gpuCard = new("GPU", Color.FromArgb(163, 230, 53));
+    private readonly MetricCard _networkCard = new(
+        "Network", Color.FromArgb(56, 189, 248), accent2: Color.FromArgb(251, 191, 36), sparklineMax: null);
+    private readonly MetricCard _logCard = new("Log", Color.FromArgb(127, 209, 185), sparkline: false);
 
-    private readonly Label _memoryPrimary = new();
-    private readonly Label _memorySecondary = new();
-    private readonly ProgressBar _memoryBar = new();
-
-    private readonly Label _diskPrimary = new();
-    private readonly Label _diskSecondary = new();
-    private readonly ProgressBar _diskBar = new();
-
-    private readonly Label _gpuPrimary = new();
-    private readonly Label _gpuSecondary = new();
-    private readonly ProgressBar _gpuBar = new();
-
-    private readonly Label _networkPrimary = new();
-    private readonly Label _networkSecondary = new();
-
-    private readonly Label _loggerPrimary = new();
-    private readonly Label _loggerSummary = new();
+    private readonly Label _selfUsageLabel = new();
+    private readonly Process _selfProcess = Process.GetCurrentProcess();
+    private readonly Stopwatch _selfClock = Stopwatch.StartNew();
+    private TimeSpan _lastSelfCpu;
+    private TimeSpan _lastSelfWall;
+    private readonly bool _isAdministrator = IsRunningAsAdministrator();
 
     private readonly AppSettings _settings;
     private readonly string _appVersionText;
@@ -69,8 +63,8 @@ public sealed class MainForm : Form
         Font = new Font("Segoe UI", 9F, FontStyle.Regular, GraphicsUnit.Point);
         Text = $"TechArchive PC Monitoring v{_appVersionText}";
         StartPosition = FormStartPosition.CenterScreen;
-        MinimumSize = new Size(860, 650);
-        Size = new Size(960, 700);
+        MinimumSize = new Size(880, 720);
+        Size = new Size(980, 780);
         BackColor = Color.FromArgb(14, 23, 38);
         ForeColor = Color.White;
         Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
@@ -94,8 +88,8 @@ public sealed class MainForm : Form
             ColumnCount = 1,
             RowCount = 3,
         };
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 56F));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 250F));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 64F));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 360F));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
         Controls.Add(root);
 
@@ -103,15 +97,15 @@ public sealed class MainForm : Form
         {
             Dock = DockStyle.Fill,
             BackColor = Color.FromArgb(22, 37, 58),
-            Padding = new Padding(14, 10, 14, 10),
+            Padding = new Padding(14, 7, 14, 4),
         };
         root.Controls.Add(header, 0, 0);
 
         var actionPanel = new FlowLayoutPanel
         {
             Dock = DockStyle.Right,
-            Width = 200,
-            FlowDirection = FlowDirection.LeftToRight,
+            Width = 300,
+            FlowDirection = FlowDirection.RightToLeft,
             WrapContents = false,
             BackColor = header.BackColor,
             Padding = new Padding(0),
@@ -125,28 +119,40 @@ public sealed class MainForm : Form
             AutoSize = true,
             Font = new Font(Font.FontFamily, 15F, FontStyle.Bold),
             ForeColor = Color.White,
-            Location = new Point(10, 10),
+            Location = new Point(10, 14),
         };
         header.Controls.Add(title);
 
-        var donateButton = CreateHeaderButton("Donate", "https://www.paypal.com/ncp/payment/T2KAST2XQC6BS");
-        var homepageButton = CreateHeaderButton("Homepage", "https://techarchive.click/");
-        actionPanel.Controls.Add(donateButton);
-        actionPanel.Controls.Add(homepageButton);
+        actionPanel.Controls.Add(CreateMenuButton());
 
-        _updatedLabel.AutoSize = true;
-        _updatedLabel.ForeColor = Color.FromArgb(220, 226, 233);
-        _updatedLabel.Text = "Updated: -";
-        _updatedLabel.Location = new Point(450, 10);
-        _updatedLabel.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-        header.Controls.Add(_updatedLabel);
+        var statusStack = new FlowLayoutPanel
+        {
+            FlowDirection = FlowDirection.TopDown,
+            WrapContents = false,
+            AutoSize = true,
+            BackColor = header.BackColor,
+            Margin = new Padding(0, 0, 12, 0),
+        };
+        actionPanel.Controls.Add(statusStack);
 
         _statusLabel.AutoSize = true;
         _statusLabel.ForeColor = Color.FromArgb(127, 209, 185);
         _statusLabel.Text = "Idle";
-        _statusLabel.Location = new Point(450, 30);
-        _statusLabel.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-        header.Controls.Add(_statusLabel);
+        _statusLabel.Margin = new Padding(0);
+        statusStack.Controls.Add(_statusLabel);
+
+        // How much this app itself costs: the number a monitoring tool should be honest about.
+        _selfUsageLabel.AutoSize = true;
+        _selfUsageLabel.ForeColor = Color.FromArgb(159, 179, 200);
+        _selfUsageLabel.Text = "This app: -";
+        _selfUsageLabel.Margin = new Padding(0);
+        statusStack.Controls.Add(_selfUsageLabel);
+
+        _updatedLabel.AutoSize = true;
+        _updatedLabel.ForeColor = Color.FromArgb(159, 179, 200);
+        _updatedLabel.Text = "Updated: -";
+        _updatedLabel.Margin = new Padding(0);
+        statusStack.Controls.Add(_updatedLabel);
 
         var metrics = new TableLayoutPanel
         {
@@ -163,12 +169,12 @@ public sealed class MainForm : Form
         metrics.RowStyles.Add(new RowStyle(SizeType.Percent, 50F));
         root.Controls.Add(metrics, 0, 1);
 
-        metrics.Controls.Add(CreateMetricCard("CPU", _cpuPrimary, _cpuSecondary, _cpuBar), 0, 0);
-        metrics.Controls.Add(CreateMetricCard("Memory", _memoryPrimary, _memorySecondary, _memoryBar), 1, 0);
-        metrics.Controls.Add(CreateMetricCard("Disk", _diskPrimary, _diskSecondary, _diskBar), 2, 0);
-        metrics.Controls.Add(CreateMetricCard("GPU", _gpuPrimary, _gpuSecondary, _gpuBar), 0, 1);
-        metrics.Controls.Add(CreateMetricCard("Network", _networkPrimary, _networkSecondary, null), 1, 1);
-        metrics.Controls.Add(CreateLogStatusCard(), 2, 1);
+        metrics.Controls.Add(_cpuCard, 0, 0);
+        metrics.Controls.Add(_memoryCard, 1, 0);
+        metrics.Controls.Add(_diskCard, 2, 0);
+        metrics.Controls.Add(_gpuCard, 0, 1);
+        metrics.Controls.Add(_networkCard, 1, 1);
+        metrics.Controls.Add(_logCard, 2, 1);
 
         var bottom = new TableLayoutPanel
         {
@@ -266,7 +272,7 @@ public sealed class MainForm : Form
         sideLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 20F));
         sideLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 22F));
         sideLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 32F));
-        sideLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 10F));
+        sideLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 32F));
         sideLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 22F));
         sideLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 32F));
         sideLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 32F));
@@ -288,7 +294,7 @@ public sealed class MainForm : Form
 
         sideLayout.Controls.Add(new Label
         {
-            Text = "Duration (hh:mm:ss)",
+            Text = "Duration (h:mm:ss)",
             Dock = DockStyle.Fill,
             ForeColor = Color.FromArgb(224, 225, 221),
             TextAlign = ContentAlignment.BottomLeft,
@@ -301,6 +307,24 @@ public sealed class MainForm : Form
         _durationTextBox.ForeColor = Color.White;
         _durationTextBox.TextChanged += (_, _) => UpdateLogStatusDisplay();
         sideLayout.Controls.Add(_durationTextBox, 0, 2);
+
+        var presets = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 3,
+            RowCount = 1,
+            BackColor = sidePanel.BackColor,
+            Margin = new Padding(0),
+        };
+        foreach (var (label, value) in new[] { ("10 min", "00:10:00"), ("30 min", "00:30:00"), ("1 hour", "01:00:00") })
+        {
+            presets.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.33F));
+            var preset = new Button { Text = label, Dock = DockStyle.Fill };
+            preset.Click += (_, _) => _durationTextBox.Text = value;
+            presets.Controls.Add(preset);
+        }
+
+        sideLayout.Controls.Add(presets, 0, 3);
 
         sideLayout.Controls.Add(new Label
         {
@@ -344,28 +368,41 @@ public sealed class MainForm : Form
         _startLoggingButton.Click += (_, _) => StartLogging();
         sideLayout.Controls.Add(_startLoggingButton, 0, 8);
 
-        _stopLoggingButton.Text = "Stop Log";
+        var stopButtons = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 2,
+            RowCount = 1,
+            BackColor = sidePanel.BackColor,
+            Margin = new Padding(0),
+        };
+        stopButtons.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 60F));
+        stopButtons.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 40F));
+        sideLayout.Controls.Add(stopButtons, 0, 9);
+
+        _stopLoggingButton.Text = "Stop && Save";
         _stopLoggingButton.Dock = DockStyle.Fill;
         _stopLoggingButton.Enabled = false;
         _stopLoggingButton.Click += (_, _) => StopLogging();
-        sideLayout.Controls.Add(_stopLoggingButton, 0, 9);
+        stopButtons.Controls.Add(_stopLoggingButton, 0, 0);
+
+        _cancelLoggingButton.Text = "Discard";
+        _cancelLoggingButton.Dock = DockStyle.Fill;
+        _cancelLoggingButton.Enabled = false;
+        _cancelLoggingButton.Click += (_, _) => CancelLoggingSession();
+        stopButtons.Controls.Add(_cancelLoggingButton, 1, 0);
 
         _loggingLabel.Dock = DockStyle.Fill;
         _loggingLabel.ForeColor = Color.FromArgb(159, 179, 200);
-        _loggingLabel.Text = "Stop Log clears the current session without saving.";
+        _loggingLabel.Text = "Stop && Save writes summary.txt now. Discard deletes the session.";
         _loggingLabel.TextAlign = ContentAlignment.TopLeft;
         sideLayout.Controls.Add(_loggingLabel, 0, 10);
 
-        _cpuPrimary.Text = "0.0%";
-        _cpuSecondary.Text = "Clock N/A";
-        _memoryPrimary.Text = "0.0%";
-        _memorySecondary.Text = "0 B / 0 B";
-        _diskPrimary.Text = "0.0%";
-        _diskSecondary.Text = "Free 0 B | R 0 B/s | W 0 B/s";
-        _gpuPrimary.Text = "0.0%";
-        _gpuSecondary.Text = "VRAM 0 B | Temp N/A";
-        _networkPrimary.Text = "RX 0 B/s | TX 0 B/s";
-        _networkSecondary.Text = "Total RX 0 B | Total TX 0 B";
+        _cpuCard.SetContent("-", null, ("Clock", "-"), ("Temp", "-"));
+        _memoryCard.SetContent("-", null, ("Used", "-"), ("Total", "-"));
+        _diskCard.SetContent("-", null, ("Read", "-"), ("Write", "-"), ("Free", "-"));
+        _gpuCard.SetContent("-", null, ("VRAM", "-"), ("Temp", "-"));
+        _networkCard.SetContent("-", null, ("Upload", "-"), ("Total down / up", "-"));
 
         UpdateLogStatusDisplay();
         ResumeLayout();
@@ -390,177 +427,6 @@ public sealed class MainForm : Form
         };
         container.Controls.Add(titleLabel);
         return container;
-    }
-
-    private Control CreateMetricCard(string title, Label primary, Label secondary, ProgressBar? progressBar)
-    {
-        var panel = new Panel
-        {
-            Dock = DockStyle.Fill,
-            Margin = new Padding(0, 0, 10, 10),
-            Padding = new Padding(12, 10, 12, 10),
-            BackColor = Color.FromArgb(27, 38, 59),
-        };
-
-        var layout = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            ColumnCount = 1,
-            RowCount = 2,
-            BackColor = panel.BackColor,
-            Margin = new Padding(0),
-            Padding = new Padding(0),
-        };
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 20F));
-        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
-        panel.Controls.Add(layout);
-
-        var titleLabel = new Label
-        {
-            Text = title,
-            Dock = DockStyle.Fill,
-            Height = 20,
-            ForeColor = Color.FromArgb(224, 225, 221),
-            Font = new Font(Font.FontFamily, 9.5F, FontStyle.Bold),
-        };
-        layout.Controls.Add(titleLabel, 0, 0);
-
-        var content = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            ColumnCount = 1,
-            RowCount = 4,
-            BackColor = panel.BackColor,
-            Margin = new Padding(0),
-            Padding = new Padding(0),
-        };
-        content.RowStyles.Add(new RowStyle(SizeType.Absolute, 34F));
-        content.RowStyles.Add(new RowStyle(SizeType.Absolute, 16F));
-        content.RowStyles.Add(new RowStyle(SizeType.Absolute, 64F));
-        content.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
-        layout.Controls.Add(content, 0, 1);
-
-        primary.Dock = DockStyle.Fill;
-        primary.Font = new Font(Font.FontFamily, 16F, FontStyle.Bold);
-        primary.ForeColor = Color.White;
-        primary.Padding = new Padding(0, 6, 0, 0);
-        content.Controls.Add(primary, 0, 0);
-
-        if (progressBar is not null)
-        {
-            progressBar.Dock = DockStyle.Fill;
-            progressBar.Height = 12;
-            progressBar.Maximum = 100;
-            progressBar.Style = ProgressBarStyle.Continuous;
-            progressBar.Margin = new Padding(0, 2, 0, 2);
-            content.Controls.Add(progressBar, 0, 1);
-        }
-        else
-        {
-            var spacer = new Panel
-            {
-                Dock = DockStyle.Fill,
-                BackColor = panel.BackColor,
-                Margin = new Padding(0),
-            };
-            content.Controls.Add(spacer, 0, 1);
-        }
-
-        secondary.Dock = DockStyle.Fill;
-        secondary.AutoSize = false;
-        secondary.AutoEllipsis = false;
-        secondary.Font = new Font(Font.FontFamily, 8.75F, FontStyle.Regular);
-        secondary.ForeColor = Color.FromArgb(159, 179, 200);
-        secondary.TextAlign = ContentAlignment.TopLeft;
-        secondary.Padding = new Padding(0, 2, 0, 0);
-        content.Controls.Add(secondary, 0, 2);
-
-        var filler = new Panel
-        {
-            Dock = DockStyle.Fill,
-            BackColor = panel.BackColor,
-            Margin = new Padding(0),
-        };
-        content.Controls.Add(filler, 0, 3);
-
-        return panel;
-    }
-
-    private Control CreateLogStatusCard()
-    {
-        var panel = new Panel
-        {
-            Dock = DockStyle.Fill,
-            Margin = new Padding(0, 0, 10, 10),
-            Padding = new Padding(12, 10, 12, 10),
-            BackColor = Color.FromArgb(27, 38, 59),
-        };
-
-        var layout = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            ColumnCount = 1,
-            RowCount = 2,
-            BackColor = panel.BackColor,
-            Margin = new Padding(0),
-            Padding = new Padding(0),
-        };
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 20F));
-        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
-        panel.Controls.Add(layout);
-
-        var titleLabel = new Label
-        {
-            Text = "Log",
-            Dock = DockStyle.Fill,
-            Height = 20,
-            ForeColor = Color.FromArgb(224, 225, 221),
-            Font = new Font(Font.FontFamily, 9.5F, FontStyle.Bold),
-        };
-        layout.Controls.Add(titleLabel, 0, 0);
-
-        var content = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            ColumnCount = 1,
-            RowCount = 4,
-            BackColor = panel.BackColor,
-            Margin = new Padding(0),
-            Padding = new Padding(0),
-        };
-        content.RowStyles.Add(new RowStyle(SizeType.Absolute, 34F));
-        content.RowStyles.Add(new RowStyle(SizeType.Absolute, 16F));
-        content.RowStyles.Add(new RowStyle(SizeType.Absolute, 64F));
-        content.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
-        layout.Controls.Add(content, 0, 1);
-
-        _loggerPrimary.Dock = DockStyle.Fill;
-        _loggerPrimary.Font = new Font(Font.FontFamily, 16F, FontStyle.Bold);
-        _loggerPrimary.ForeColor = Color.White;
-        _loggerPrimary.Padding = new Padding(0, 6, 0, 0);
-        content.Controls.Add(_loggerPrimary, 0, 0);
-
-        var spacer = new Panel
-        {
-            Dock = DockStyle.Fill,
-            BackColor = panel.BackColor,
-            Margin = new Padding(0),
-        };
-        content.Controls.Add(spacer, 0, 1);
-
-        ConfigureLogStatLabel(_loggerSummary);
-        _loggerSummary.Margin = new Padding(0);
-        content.Controls.Add(_loggerSummary, 0, 2);
-
-        var filler = new Panel
-        {
-            Dock = DockStyle.Fill,
-            BackColor = panel.BackColor,
-            Margin = new Padding(0),
-        };
-        content.Controls.Add(filler, 0, 3);
-
-        return panel;
     }
 
     private async void OnLoad(object? sender, EventArgs e)
@@ -618,32 +484,49 @@ public sealed class MainForm : Form
             return;
         }
 
-        _cpuPrimary.Text = $"{snapshot.Cpu.UsagePercent:F1}%";
-        _cpuSecondary.Text = snapshot.Cpu.CurrentClockSpeedMHz.HasValue
-            ? $"Clock {FormatClockSpeed(snapshot.Cpu.CurrentClockSpeedMHz.Value)}"
-            : "Clock N/A";
-        _cpuBar.Value = ClampPercent(snapshot.Cpu.UsagePercent);
+        var cpu = snapshot.Cpu;
+        _cpuCard.Push(cpu.UsagePercent);
+        _cpuCard.SetContent(
+            $"{cpu.UsagePercent:F1}%",
+            cpu.UsagePercent,
+            ("Clock", cpu.CurrentClockSpeedMHz.HasValue ? FormatClockSpeed(cpu.CurrentClockSpeedMHz.Value) : "N/A"),
+            ("Temp", FormatTemperature(cpu.TemperatureCelsius)));
 
-        _memoryPrimary.Text = $"{snapshot.Memory.UsagePercent:F1}%";
-        _memorySecondary.Text = $"{FormatBytes(snapshot.Memory.UsedBytes)} / {FormatBytes(snapshot.Memory.TotalBytes)}";
-        _memoryBar.Value = ClampPercent(snapshot.Memory.UsagePercent);
+        var memory = snapshot.Memory;
+        _memoryCard.Push(memory.UsagePercent);
+        _memoryCard.SetContent(
+            $"{memory.UsagePercent:F1}%",
+            memory.UsagePercent,
+            ("Used", FormatBytes(memory.UsedBytes)),
+            ("Total", FormatBytes(memory.TotalBytes)));
 
-        _diskPrimary.Text = $"{snapshot.Disk.UsagePercent:F1}%";
-        _diskSecondary.Text =
-            $"Free {FormatBytes(snapshot.Disk.FreeBytes)} | R {FormatRate(snapshot.Disk.ReadBytesPerSecond)} | W {FormatRate(snapshot.Disk.WriteBytesPerSecond)}";
-        _diskBar.Value = ClampPercent(snapshot.Disk.UsagePercent);
+        var disk = snapshot.Disk;
+        _diskCard.Push(disk.UsagePercent);
+        _diskCard.SetContent(
+            $"{disk.UsagePercent:F1}%",
+            disk.UsagePercent,
+            ("Read", FormatRate(disk.ReadBytesPerSecond)),
+            ("Write", FormatRate(disk.WriteBytesPerSecond)),
+            ("Free", $"{FormatBytes(disk.FreeBytes)} / {FormatBytes(disk.TotalBytes)}"));
 
-        _gpuPrimary.Text = $"{snapshot.Gpu.UsagePercent:F1}%";
-        _gpuSecondary.Text = snapshot.Gpu.TemperatureCelsius.HasValue
-            ? $"VRAM {FormatBytes(snapshot.Gpu.DedicatedMemoryBytes)} | Temp {snapshot.Gpu.TemperatureCelsius.Value:F1} C"
-            : $"VRAM {FormatBytes(snapshot.Gpu.DedicatedMemoryBytes)} | Temp N/A";
-        _gpuBar.Value = ClampPercent(snapshot.Gpu.UsagePercent);
+        var gpu = snapshot.Gpu;
+        _gpuCard.Push(gpu.UsagePercent);
+        _gpuCard.SetContent(
+            $"{gpu.UsagePercent:F1}%",
+            gpu.UsagePercent,
+            ("VRAM", FormatBytes(gpu.DedicatedMemoryBytes)),
+            ("Temp", FormatTemperature(gpu.TemperatureCelsius)));
 
-        _networkPrimary.Text = $"RX {FormatRate(snapshot.Network.ReceiveBytesPerSecond)} | TX {FormatRate(snapshot.Network.SendBytesPerSecond)}";
-        _networkSecondary.Text =
-            $"Total RX {FormatBytes(snapshot.Network.TotalReceivedBytes)} | Total TX {FormatBytes(snapshot.Network.TotalSentBytes)}";
+        var network = snapshot.Network;
+        _networkCard.Push(network.ReceiveBytesPerSecond, network.SendBytesPerSecond);
+        _networkCard.SetContent(
+            $"↓ {FormatRate(network.ReceiveBytesPerSecond)}",
+            null,
+            ("Upload", $"↑ {FormatRate(network.SendBytesPerSecond)}"),
+            ("Total down / up", $"{FormatBytes(network.TotalReceivedBytes)} / {FormatBytes(network.TotalSentBytes)}"));
 
         _updatedLabel.Text = $"Updated: {snapshot.Timestamp.LocalDateTime:HH:mm:ss}";
+        UpdateSelfUsage();
 
         for (var i = 0; i < 5; i++)
         {
@@ -674,7 +557,7 @@ public sealed class MainForm : Form
 
         if (!TryGetConfiguredDuration(out var duration) || duration <= TimeSpan.Zero)
         {
-            _loggingLabel.Text = "Use the hh:mm:ss format.";
+            _loggingLabel.Text = "Use the h:mm:ss format, e.g. 00:30:00 or 36:00:00.";
             return;
         }
 
@@ -688,52 +571,57 @@ public sealed class MainForm : Form
         Directory.CreateDirectory(rootPath);
         _loggingSession = new LoggingSession(duration, rootPath);
         _loggingLabel.Text = "summary.txt is saved automatically when the timer completes.";
-        _startLoggingButton.Enabled = false;
-        _stopLoggingButton.Enabled = true;
+        SetLoggingButtons(isLogging: true);
         SetModeStatus();
         UpdateLogStatusDisplay();
     }
 
-    private void StopLogging()
+    private void SetLoggingButtons(bool isLogging)
     {
-        CancelLoggingSession();
+        _startLoggingButton.Enabled = !isLogging;
+        _stopLoggingButton.Enabled = isLogging;
+        _cancelLoggingButton.Enabled = isLogging;
+    }
+
+    private async void StopLogging()
+    {
+        await SaveLoggingSessionAsync();
     }
 
     private void CancelLoggingSession()
     {
-        var session = _loggingSession;
+        // Exchange: the reader thread may be saving the same session at its end time.
+        var session = Interlocked.Exchange(ref _loggingSession, null);
         if (session is null)
         {
             return;
         }
 
-        _loggingSession = null;
         session.Discard();
-        _startLoggingButton.Enabled = true;
-        _stopLoggingButton.Enabled = false;
-        _loggingLabel.Text = "Log session cleared.";
+        SetLoggingButtons(isLogging: false);
+        _loggingLabel.Text = "Log session discarded.";
         SetModeStatus();
         UpdateLogStatusDisplay();
     }
 
     private async Task SaveLoggingSessionAsync()
     {
-        var session = _loggingSession;
+        var session = Interlocked.Exchange(ref _loggingSession, null);
         if (session is null)
         {
             return;
         }
 
-        _loggingSession = null;
         await session.SaveAsync();
 
         if (!_isClosing && !IsDisposed && IsHandleCreated)
         {
             BeginInvoke(new Action(() =>
             {
-                _startLoggingButton.Enabled = true;
-                _stopLoggingButton.Enabled = false;
-                _loggingLabel.Text = $"summary.txt saved to {session.SessionDirectory}";
+                SetLoggingButtons(isLogging: false);
+                _loggingLabel.Text = session.HasSamples
+                    ? $"summary.txt saved to {session.SessionDirectory}"
+                    : "Nothing recorded yet, so no file was saved.";
                 SetModeStatus();
                 UpdateLogStatusDisplay(session.SessionDirectory);
             }));
@@ -801,7 +689,7 @@ public sealed class MainForm : Form
         SaveSettings();
     }
 
-    private async Task CheckForUpdatesAsync()
+    private async Task CheckForUpdatesAsync(bool manual = false)
     {
         if (_isCheckingForUpdates || _isClosing)
         {
@@ -827,12 +715,22 @@ public sealed class MainForm : Form
             var manager = new UpdateManager(updateSource);
             if (!manager.IsInstalled)
             {
+                if (manual)
+                {
+                    MessageBox.Show(this, "Updates work only in the installed app.", "Check for updates");
+                }
+
                 return;
             }
 
             var update = await manager.CheckForUpdatesAsync();
             if (update is null || _isClosing)
             {
+                if (manual && update is null)
+                {
+                    MessageBox.Show(this, $"You have the latest version ({_appVersionText}).", "Check for updates");
+                }
+
                 return;
             }
 
@@ -905,59 +803,75 @@ public sealed class MainForm : Form
 
     private void UpdateLogStatusDisplay(string? savedSessionDirectory = null)
     {
-        if (_loggingSession is not null)
+        var session = _loggingSession;
+        if (session is not null)
         {
-            _loggerPrimary.Text = "Logging";
-            _loggerSummary.Text =
-                $"Target {FormatDuration(_loggingSession.Duration)} | Left {FormatDuration(_loggingSession.Remaining)}";
+            var progress = session.Duration > TimeSpan.Zero
+                ? session.Elapsed.TotalSeconds / session.Duration.TotalSeconds * 100
+                : 0;
+            // percent drives the bar; logging progress is not a load level, so keep it out of the warning colours.
+            _logCard.SetContent(
+                "Logging",
+                Math.Min(progress, 59.9),
+                ("Elapsed", FormatDuration(session.Elapsed)),
+                ("Left", FormatDuration(session.Remaining)),
+                ("Target", FormatDuration(session.Duration)));
             return;
         }
 
-        _loggerPrimary.Text = "Ready";
-
-        if (!string.IsNullOrWhiteSpace(savedSessionDirectory))
-        {
-            if (TryGetConfiguredDuration(out var savedDuration))
-            {
-                _loggerSummary.Text =
-                    $"Target {FormatDuration(savedDuration)} | Left {FormatDuration(savedDuration)}";
-            }
-            else
-            {
-                _loggerSummary.Text = "Target --:--:-- | Left --:--:--";
-            }
-
-            return;
-        }
-
-        if (TryGetConfiguredDuration(out var duration))
-        {
-            _loggerSummary.Text =
-                $"Target {FormatDuration(duration)} | Left {FormatDuration(duration)}";
-        }
-        else
-        {
-            _loggerSummary.Text = "Target --:--:-- | Left --:--:--";
-        }
+        var target = TryGetConfiguredDuration(out var duration) ? FormatDuration(duration) : "invalid";
+        _logCard.SetContent(
+            "Ready",
+            null,
+            ("Target", target),
+            ("Last saved", string.IsNullOrWhiteSpace(savedSessionDirectory) ? "-" : Path.GetFileName(savedSessionDirectory)));
     }
 
-    private Button CreateHeaderButton(string text, string url)
+    private void UpdateSelfUsage()
+    {
+        _selfProcess.Refresh();
+        var cpu = _selfProcess.TotalProcessorTime;
+        var wall = _selfClock.Elapsed;
+        var cpuPercent = (cpu - _lastSelfCpu).TotalMilliseconds /
+                         Math.Max(1, (wall - _lastSelfWall).TotalMilliseconds) / Environment.ProcessorCount * 100;
+        _lastSelfCpu = cpu;
+        _lastSelfWall = wall;
+        _selfUsageLabel.Text = $"This app: CPU {cpuPercent:F1}% · RAM {FormatBytes(_selfProcess.WorkingSet64)}";
+    }
+
+    private string FormatTemperature(double? celsius) =>
+        // Sensors that can't be read without admin often report 0 instead of nothing.
+        celsius > 0 ? $"{celsius.Value:F0} °C" : _isAdministrator ? "N/A" : "N/A (run as admin)";
+
+    private static bool IsRunningAsAdministrator()
+    {
+        using var identity = System.Security.Principal.WindowsIdentity.GetCurrent();
+        return new System.Security.Principal.WindowsPrincipal(identity)
+            .IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
+    }
+
+    private Button CreateMenuButton()
     {
         var button = new Button
         {
-            Text = text,
-            Width = 92,
-            Height = 28,
-            Margin = new Padding(6, 0, 0, 0),
+            Text = "⋯",
+            Width = 36,
+            Height = 30,
+            Margin = new Padding(0, 6, 0, 0),
             FlatStyle = FlatStyle.Flat,
             BackColor = Color.FromArgb(36, 59, 83),
             ForeColor = Color.White,
             TabStop = false,
         };
         button.FlatAppearance.BorderColor = Color.FromArgb(78, 99, 126);
-        button.FlatAppearance.MouseDownBackColor = Color.FromArgb(52, 76, 103);
         button.FlatAppearance.MouseOverBackColor = Color.FromArgb(45, 69, 96);
-        button.Click += (_, _) => OpenExternalUrl(url);
+
+        var menu = new ContextMenuStrip();
+        menu.Items.Add("Check for updates", null, async (_, _) => await CheckForUpdatesAsync(manual: true));
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add("Homepage", null, (_, _) => OpenExternalUrl("https://techarchive.click/"));
+        menu.Items.Add("Donate", null, (_, _) => OpenExternalUrl("https://www.paypal.com/ncp/payment/T2KAST2XQC6BS"));
+        button.Click += (_, _) => menu.Show(button, new Point(button.Width - menu.Width, button.Height));
         return button;
     }
 
@@ -970,8 +884,23 @@ public sealed class MainForm : Form
         });
     }
 
-    private bool TryGetConfiguredDuration(out TimeSpan duration) =>
-        TimeSpan.TryParseExact(_durationTextBox.Text, @"hh\:mm\:ss", CultureInfo.InvariantCulture, out duration);
+    // h:mm:ss with any hour count, so sessions longer than 24h are allowed.
+    private bool TryGetConfiguredDuration(out TimeSpan duration)
+    {
+        duration = TimeSpan.Zero;
+        var parts = _durationTextBox.Text.Trim().Split(':');
+        if (parts.Length != 3 ||
+            !int.TryParse(parts[0], NumberStyles.None, CultureInfo.InvariantCulture, out var hours) ||
+            !int.TryParse(parts[1], NumberStyles.None, CultureInfo.InvariantCulture, out var minutes) ||
+            !int.TryParse(parts[2], NumberStyles.None, CultureInfo.InvariantCulture, out var seconds) ||
+            minutes > 59 || seconds > 59 || hours > 999)
+        {
+            return false;
+        }
+
+        duration = new TimeSpan(hours, minutes, seconds);
+        return true;
+    }
 
     private static bool TryResolveUpdateSource(string input, out string source)
     {
@@ -1006,7 +935,8 @@ public sealed class MainForm : Form
 
     private static string GetDisplayVersion()
     {
-        var versionText = Application.ProductVersion;
+        // The SDK appends "+<commit hash>" to the product version; drop it for display.
+        var versionText = Application.ProductVersion.Split('+')[0];
         if (Version.TryParse(versionText, out var version))
         {
             return version.Build >= 0
@@ -1018,22 +948,9 @@ public sealed class MainForm : Form
     }
 
     private static string FormatDuration(TimeSpan value) =>
-        value < TimeSpan.Zero ? "00:00:00" : value.ToString(@"hh\:mm\:ss", CultureInfo.InvariantCulture);
-
-    private static int ClampPercent(double value)
-    {
-        if (value < 0)
-        {
-            return 0;
-        }
-
-        if (value > 100)
-        {
-            return 100;
-        }
-
-        return (int)Math.Round(value, MidpointRounding.AwayFromZero);
-    }
+        value < TimeSpan.Zero
+            ? "00:00:00"
+            : $"{(int)value.TotalHours:00}:{value.Minutes:00}:{value.Seconds:00}";
 
     private static string FormatBytes(double bytes)
     {
@@ -1051,16 +968,6 @@ public sealed class MainForm : Form
     }
 
     private static string FormatRate(double bytesPerSecond) => $"{FormatBytes(bytesPerSecond)}/s";
-
-    private void ConfigureLogStatLabel(Label label)
-    {
-        label.Dock = DockStyle.Fill;
-        label.AutoSize = false;
-        label.Font = new Font(Font.FontFamily, 8.5F, FontStyle.Regular);
-        label.ForeColor = Color.FromArgb(159, 179, 200);
-        label.TextAlign = ContentAlignment.TopLeft;
-        label.Padding = new Padding(0, 2, 0, 0);
-    }
 
     private Label CreateProcessHeaderLabel(string text, ContentAlignment alignment)
     {

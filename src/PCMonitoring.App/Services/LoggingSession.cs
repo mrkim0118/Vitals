@@ -136,9 +136,16 @@ public sealed class LoggingSession
         Directory.CreateDirectory(RootDirectory);
         Directory.CreateDirectory(SessionDirectory);
 
+        // Stop & Save runs on the UI thread while the sampler may still be adding to these totals.
+        string summary;
+        lock (_processTotals)
+        {
+            summary = BuildSummaryText();
+        }
+
         await File.WriteAllTextAsync(
             Path.Combine(SessionDirectory, "summary.txt"),
-            BuildSummaryText(),
+            summary,
             Encoding.UTF8,
             cancellationToken);
     }
@@ -148,6 +155,7 @@ public sealed class LoggingSession
         var builder = new StringBuilder();
         builder.AppendLine($"Started: {_startedAt:yyyy-MM-dd HH:mm:ss}");
         builder.AppendLine($"Duration: {Duration:c}");
+        builder.AppendLine($"Recorded: {Elapsed:c}");
         builder.AppendLine($"Sample Count: {SampleCount}");
         builder.AppendLine($"Log Folder: {SessionDirectory}");
         builder.AppendLine();
