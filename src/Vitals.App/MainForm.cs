@@ -68,7 +68,7 @@ public sealed class MainForm : Form
 
         AutoScaleMode = AutoScaleMode.Dpi;
         Font = new Font("Segoe UI", 9F, FontStyle.Regular, GraphicsUnit.Point);
-        Text = $"TechArchive Vitals v{_appVersionText}";
+        Text = $"Vitals v{_appVersionText}";
         StartPosition = FormStartPosition.CenterScreen;
         MinimumSize = new Size(880, 740);
         Size = new Size(980, 800);
@@ -121,7 +121,7 @@ public sealed class MainForm : Form
 
         var title = new Label
         {
-            Text = $"TechArchive Vitals v{_appVersionText}",
+            Text = $"Vitals v{_appVersionText}",
             AutoSize = true,
             Font = new Font(Font.FontFamily, 15F, FontStyle.Bold),
             ForeColor = Color.White,

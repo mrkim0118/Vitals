@@ -1,4 +1,4 @@
-TechArchive Vitals
+Vitals
 
 Manggdy가 만든 Windows용 가벼운 실시간 PC 모니터입니다.
 
@@ -90,7 +90,7 @@ Vitals.sln이 아니라 앱 프로젝트를 빌드하세요. dotnet CLI로는 C+
 
 릴리스 노트(artifacts\velopack\release-notes-<버전>.md)를 먼저 작성한 뒤 실행합니다.
 
-  powershell -ExecutionPolicy Bypass -File .\scripts\publish-velopack.ps1 -Version 1.0.13
+  powershell -ExecutionPolicy Bypass -File .\scripts\publish-velopack.ps1 -Version 1.0.0
 
 스크립트가 하는 일:
 - .pdb 없이 framework-dependent win-x64 빌드 생성

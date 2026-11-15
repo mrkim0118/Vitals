@@ -1,8 +1,8 @@
 param(
     [Parameter(Mandatory = $true)]
     [string]$Version,
-    [string]$PackId = "TechArchive.Vitals",
-    [string]$PackTitle = "TechArchive Vitals",
+    [string]$PackId = "Manggdy.Vitals", # not "Vitals": uninstall deletes %LocalAppData%\<PackId>, which would take the logs in %LocalAppData%\Vitals with it
+    [string]$PackTitle = "Vitals",
     [string]$Channel = "win",
     [string]$Runtime = "win-x64",
     [string]$Configuration = "Release",

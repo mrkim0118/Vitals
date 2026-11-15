@@ -13,8 +13,8 @@
     <StartupObject>Vitals.App.Program</StartupObject>
     <Company>Manggdy</Company>
     <Authors>Manggdy</Authors>
-    <Product>TechArchive Vitals</Product>
-    <AssemblyTitle>TechArchive Vitals</AssemblyTitle>
+    <Product>Vitals</Product>
+    <AssemblyTitle>Vitals</AssemblyTitle>
     <Description>Real-time PC resource monitor by Manggdy.</Description>
     <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
   </PropertyGroup>

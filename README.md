@@ -1,4 +1,4 @@
-# TechArchive Vitals
+# Vitals
 
 A lightweight real-time PC monitor for Windows, by Manggdy.
 
@@ -97,7 +97,7 @@ dotnet tool install -g vpk
 Create a release (write `artifacts\velopack\release-notes-<version>.md` first):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\publish-velopack.ps1 -Version 1.0.13
+powershell -ExecutionPolicy Bypass -File .\scripts\publish-velopack.ps1 -Version 1.0.0
 ```
 
 The script:
