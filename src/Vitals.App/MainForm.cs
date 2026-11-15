@@ -5,11 +5,11 @@ using System.Globalization;
 using System.IO;
 using System.Threading.Tasks;
 using System.Windows.Forms;
-using PCMonitoring.App.Models;
-using PCMonitoring.App.Services;
+using Vitals.App.Models;
+using Vitals.App.Services;
 using Velopack;
 
-namespace PCMonitoring.App;
+namespace Vitals.App;
 
 public sealed class MainForm : Form
 {
@@ -31,11 +31,11 @@ public sealed class MainForm : Form
     private readonly Label _statusLabel = new();
     private readonly Label _updatedLabel = new();
     private readonly Label _loggingLabel = new();
-    private readonly Button _startLoggingButton = new();
-    private readonly Button _stopLoggingButton = new();
-    private readonly Button _cancelLoggingButton = new();
-    private readonly Button _browseLogPathButton = new();
-    private readonly Button _openLogPathButton = new();
+    private readonly ThemedButton _startLoggingButton = new();
+    private readonly ThemedButton _stopLoggingButton = new();
+    private readonly ThemedButton _cancelLoggingButton = new();
+    private readonly ThemedButton _browseLogPathButton = new();
+    private readonly ThemedButton _openLogPathButton = new();
 
     private readonly MetricCard _cpuCard = new("CPU", Color.FromArgb(96, 165, 250));
     private readonly MetricCard _memoryCard = new("Memory", Color.FromArgb(167, 139, 250));
@@ -43,7 +43,7 @@ public sealed class MainForm : Form
     private readonly MetricCard _gpuCard = new("GPU", Color.FromArgb(163, 230, 53));
     private readonly MetricCard _networkCard = new(
         "Network", Color.FromArgb(56, 189, 248), accent2: Color.FromArgb(251, 191, 36), sparklineMax: null);
-    private readonly MetricCard _logCard = new("Log", Color.FromArgb(127, 209, 185), sparkline: false);
+    private readonly MetricCard _logCard = new("Log", Theme.Accent, sparkline: false);
 
     private readonly Label _selfUsageLabel = new();
     private readonly Process _selfProcess = Process.GetCurrentProcess();
@@ -51,6 +51,7 @@ public sealed class MainForm : Form
     private TimeSpan _lastSelfCpu;
     private TimeSpan _lastSelfWall;
     private readonly bool _isAdministrator = IsRunningAsAdministrator();
+    private readonly bool _pawnIoInstalled = IsPawnIoInstalled();
 
     private readonly AppSettings _settings;
     private readonly string _appVersionText;
@@ -67,11 +68,11 @@ public sealed class MainForm : Form
 
         AutoScaleMode = AutoScaleMode.Dpi;
         Font = new Font("Segoe UI", 9F, FontStyle.Regular, GraphicsUnit.Point);
-        Text = $"TechArchive PC Monitoring v{_appVersionText}";
+        Text = $"TechArchive Vitals v{_appVersionText}";
         StartPosition = FormStartPosition.CenterScreen;
-        MinimumSize = new Size(880, 720);
-        Size = new Size(980, 780);
-        BackColor = Color.FromArgb(14, 23, 38);
+        MinimumSize = new Size(880, 740);
+        Size = new Size(980, 800);
+        BackColor = Theme.Background;
         ForeColor = Color.White;
         Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
 
@@ -99,10 +100,9 @@ public sealed class MainForm : Form
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
         Controls.Add(root);
 
-        var header = new Panel
+        var header = new CardPanel(Theme.Header)
         {
             Dock = DockStyle.Fill,
-            BackColor = Color.FromArgb(22, 37, 58),
             Padding = new Padding(14, 7, 14, 4),
         };
         root.Controls.Add(header, 0, 0);
@@ -121,7 +121,7 @@ public sealed class MainForm : Form
 
         var title = new Label
         {
-            Text = $"TechArchive PC Monitoring v{_appVersionText}",
+            Text = $"TechArchive Vitals v{_appVersionText}",
             AutoSize = true,
             Font = new Font(Font.FontFamily, 15F, FontStyle.Bold),
             ForeColor = Color.White,
@@ -142,20 +142,20 @@ public sealed class MainForm : Form
         actionPanel.Controls.Add(statusStack);
 
         _statusLabel.AutoSize = true;
-        _statusLabel.ForeColor = Color.FromArgb(127, 209, 185);
+        _statusLabel.ForeColor = Theme.Accent;
         _statusLabel.Text = "Idle";
         _statusLabel.Margin = new Padding(0);
         statusStack.Controls.Add(_statusLabel);
 
         // How much this app itself costs: the number a monitoring tool should be honest about.
         _selfUsageLabel.AutoSize = true;
-        _selfUsageLabel.ForeColor = Color.FromArgb(159, 179, 200);
+        _selfUsageLabel.ForeColor = Theme.TextMuted;
         _selfUsageLabel.Text = "This app: -";
         _selfUsageLabel.Margin = new Padding(0);
         statusStack.Controls.Add(_selfUsageLabel);
 
         _updatedLabel.AutoSize = true;
-        _updatedLabel.ForeColor = Color.FromArgb(159, 179, 200);
+        _updatedLabel.ForeColor = Theme.TextMuted;
         _updatedLabel.Text = "Updated: -";
         _updatedLabel.Margin = new Padding(0);
         statusStack.Controls.Add(_updatedLabel);
@@ -193,11 +193,10 @@ public sealed class MainForm : Form
         bottom.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 32F));
         root.Controls.Add(bottom, 0, 2);
 
-        var processPanel = new Panel
+        var processPanel = new CardPanel
         {
             Dock = DockStyle.Fill,
-            BackColor = Color.FromArgb(27, 38, 59),
-            Padding = new Padding(10),
+            Padding = new Padding(12),
         };
         processPanel.Margin = new Padding(0, 0, 8, 0);
         bottom.Controls.Add(processPanel, 0, 0);
@@ -227,7 +226,7 @@ public sealed class MainForm : Form
         _processHeader.Dock = DockStyle.Fill;
         _processHeader.ColumnCount = ProcessColumns.Length;
         _processHeader.RowCount = 1;
-        _processHeader.BackColor = Color.FromArgb(33, 49, 74);
+        _processHeader.BackColor = Theme.SurfaceRaised;
         _processHeader.Margin = new Padding(0, 0, 0, 6);
         _processHeader.Padding = new Padding(8, 0, 8, 0);
         for (var column = 0; column < ProcessColumns.Length; column++)
@@ -252,7 +251,7 @@ public sealed class MainForm : Form
         _processList.MultiSelect = false;
         _processList.HideSelection = false;
         _processList.BorderStyle = BorderStyle.None;
-        _processList.BackColor = Color.FromArgb(15, 39, 67);
+        _processList.BackColor = Theme.Surface;
         _processList.ForeColor = Color.White;
         for (var column = 0; column < ProcessColumns.Length; column++)
         {
@@ -284,44 +283,32 @@ public sealed class MainForm : Form
             BackColor = sidePanel.BackColor,
             Padding = new Padding(0),
         };
+        sideLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 0F)); // was a "Time Setting" heading that repeated the label below
         sideLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 20F));
-        sideLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 22F));
         sideLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 32F));
         sideLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 32F));
         sideLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 22F));
         sideLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 32F));
         sideLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 32F));
-        sideLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 10F));
-        sideLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 36F));
-        sideLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 36F));
-        sideLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 64F));
+        sideLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 8F));
+        sideLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 34F));
+        sideLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 34F));
         sideLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+        sideLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 0F));
         sidePanel.Controls.Add(sideLayout);
-
-        sideLayout.Controls.Add(new Label
-        {
-            Text = "Time Setting",
-            Dock = DockStyle.Fill,
-            ForeColor = Color.FromArgb(224, 225, 221),
-            Font = new Font(Font.FontFamily, 9F, FontStyle.Bold),
-            TextAlign = ContentAlignment.BottomLeft,
-        }, 0, 0);
+        sideLayout.BringToFront(); // dock after the title, not underneath it
 
         sideLayout.Controls.Add(new Label
         {
             Text = "Duration (h:mm:ss)",
             Dock = DockStyle.Fill,
-            ForeColor = Color.FromArgb(224, 225, 221),
+            ForeColor = Theme.TextTitle,
             TextAlign = ContentAlignment.BottomLeft,
         }, 0, 1);
 
-        _durationTextBox.Dock = DockStyle.Fill;
         _durationTextBox.Text = "00:10:00";
-        _durationTextBox.BorderStyle = BorderStyle.FixedSingle;
-        _durationTextBox.BackColor = Color.FromArgb(36, 59, 83);
-        _durationTextBox.ForeColor = Color.White;
         _durationTextBox.TextChanged += (_, _) => UpdateLogStatusDisplay();
-        sideLayout.Controls.Add(_durationTextBox, 0, 2);
+        sideLayout.Controls.Add(WrapInput(_durationTextBox), 0, 2);
 
         var presets = new TableLayoutPanel
         {
@@ -334,7 +321,7 @@ public sealed class MainForm : Form
         foreach (var (label, value) in new[] { ("10 min", "00:10:00"), ("30 min", "00:30:00"), ("1 hour", "01:00:00") })
         {
             presets.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.33F));
-            var preset = new Button { Text = label, Dock = DockStyle.Fill };
+            var preset = new ThemedButton { Text = label, Dock = DockStyle.Fill };
             preset.Click += (_, _) => _durationTextBox.Text = value;
             presets.Controls.Add(preset);
         }
@@ -345,16 +332,12 @@ public sealed class MainForm : Form
         {
             Text = "Log folder",
             Dock = DockStyle.Fill,
-            ForeColor = Color.FromArgb(224, 225, 221),
+            ForeColor = Theme.TextTitle,
             TextAlign = ContentAlignment.BottomLeft,
         }, 0, 4);
 
-        _logPathTextBox.Dock = DockStyle.Fill;
-        _logPathTextBox.BorderStyle = BorderStyle.FixedSingle;
-        _logPathTextBox.BackColor = Color.FromArgb(36, 59, 83);
-        _logPathTextBox.ForeColor = Color.White;
         _logPathTextBox.Text = _settings.LogRootPath;
-        sideLayout.Controls.Add(_logPathTextBox, 0, 5);
+        sideLayout.Controls.Add(WrapInput(_logPathTextBox), 0, 5);
 
         var pathButtons = new TableLayoutPanel
         {
@@ -379,6 +362,7 @@ public sealed class MainForm : Form
         pathButtons.Controls.Add(_openLogPathButton, 1, 0);
 
         _startLoggingButton.Text = "Start Log";
+        _startLoggingButton.Primary = true;
         _startLoggingButton.Dock = DockStyle.Fill;
         _startLoggingButton.Click += (_, _) => StartLogging();
         sideLayout.Controls.Add(_startLoggingButton, 0, 8);
@@ -408,8 +392,8 @@ public sealed class MainForm : Form
         stopButtons.Controls.Add(_cancelLoggingButton, 1, 0);
 
         _loggingLabel.Dock = DockStyle.Fill;
-        _loggingLabel.ForeColor = Color.FromArgb(159, 179, 200);
-        _loggingLabel.Text = "Stop && Save writes summary.txt now. Discard deletes the session.";
+        _loggingLabel.ForeColor = Theme.TextMuted;
+        _loggingLabel.Text = "Save keeps the log, Discard deletes it.";
         _loggingLabel.TextAlign = ContentAlignment.TopLeft;
         sideLayout.Controls.Add(_loggingLabel, 0, 10);
 
@@ -425,11 +409,10 @@ public sealed class MainForm : Form
 
     private Panel CreateSectionPanel(string title)
     {
-        var container = new Panel
+        var container = new CardPanel
         {
             Dock = DockStyle.Fill,
-            BackColor = Color.FromArgb(27, 38, 59),
-            Padding = new Padding(10),
+            Padding = new Padding(12),
         };
 
         var titleLabel = new Label
@@ -442,6 +425,30 @@ public sealed class MainForm : Form
         };
         container.Controls.Add(titleLabel);
         return container;
+    }
+
+    // TextBox has no padding of its own; a rounded box around a borderless one matches the buttons.
+    private static Control WrapInput(TextBox textBox)
+    {
+        textBox.BorderStyle = BorderStyle.None;
+        textBox.BackColor = Theme.Control;
+        textBox.ForeColor = Theme.Text;
+        textBox.Dock = DockStyle.Fill;
+        var box = new CardPanel(Theme.Control)
+        {
+            Dock = DockStyle.Fill,
+            Padding = new Padding(8, 6, 8, 4),
+            Margin = new Padding(3),
+        };
+        box.Controls.Add(textBox);
+        box.Click += (_, _) => textBox.Focus();
+        return box;
+    }
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        Theme.ApplyDarkTitleBar(this);
     }
 
     private async void OnLoad(object? sender, EventArgs e)
@@ -506,7 +513,7 @@ public sealed class MainForm : Form
             $"{cpu.UsagePercent:F1}%",
             cpu.UsagePercent,
             ("Clock", cpu.CurrentClockSpeedMHz.HasValue ? FormatClockSpeed(cpu.CurrentClockSpeedMHz.Value) : "N/A"),
-            ("Temp", FormatTemperature(cpu.TemperatureCelsius)));
+            ("Temp", FormatCpuTemperature(cpu.TemperatureCelsius)));
 
         var memory = snapshot.Memory;
         _memoryCard.Push(memory.UsagePercent);
@@ -891,9 +898,37 @@ public sealed class MainForm : Form
         _selfUsageLabel.Text = $"This app: CPU {cpuPercent:F1}% · RAM {FormatBytes(_selfProcess.WorkingSet64)}";
     }
 
-    private string FormatTemperature(double? celsius) =>
-        // Sensors that can't be read without admin often report 0 instead of nothing.
-        celsius > 0 ? $"{celsius.Value:F0} °C" : _isAdministrator ? "N/A" : "N/A (run as admin)";
+    // Sensors that can't be read often report 0 instead of nothing.
+    private static string FormatTemperature(double? celsius) => celsius > 0 ? $"{celsius.Value:F0} °C" : "N/A";
+
+    // CPU sensors go through LibreHardwareMonitor's PawnIO kernel driver, which needs both the driver and admin rights.
+    private string FormatCpuTemperature(double? celsius) =>
+        celsius > 0 ? $"{celsius.Value:F0} °C"
+        : !_pawnIoInstalled ? "N/A (needs PawnIO driver)"
+        : !_isAdministrator ? "N/A (run as admin)"
+        : "N/A";
+
+    private void ShowPawnIoHelp()
+    {
+        var answer = MessageBox.Show(
+            this,
+            "CPU temperature is read through PawnIO, a signed kernel driver used by LibreHardwareMonitor.\n\n" +
+            "Install it from pawnio.eu (or run: winget install namazso.PawnIO), then restart this app as administrator.\n\n" +
+            "Open pawnio.eu now?",
+            "CPU temperature driver",
+            MessageBoxButtons.YesNo,
+            MessageBoxIcon.Information);
+        if (answer == DialogResult.Yes)
+        {
+            Process.Start(new ProcessStartInfo { FileName = "https://pawnio.eu/", UseShellExecute = true });
+        }
+    }
+
+    private static bool IsPawnIoInstalled()
+    {
+        using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services\PawnIO");
+        return key is not null;
+    }
 
     private async Task RestartAsAdministratorAsync()
     {
@@ -939,25 +974,25 @@ public sealed class MainForm : Form
 
     private Button CreateMenuButton()
     {
-        var button = new Button
+        var button = new ThemedButton
         {
             Text = "⋯",
             Width = 36,
             Height = 30,
             Margin = new Padding(0, 6, 0, 0),
-            FlatStyle = FlatStyle.Flat,
-            BackColor = Color.FromArgb(36, 59, 83),
-            ForeColor = Color.White,
             TabStop = false,
         };
-        button.FlatAppearance.BorderColor = Color.FromArgb(78, 99, 126);
-        button.FlatAppearance.MouseOverBackColor = Color.FromArgb(45, 69, 96);
 
         var menu = new ContextMenuStrip();
         menu.Items.Add("Check for updates", null, async (_, _) => await CheckForUpdatesAsync(manual: true));
         if (!_isAdministrator)
         {
-            menu.Items.Add("Restart as administrator (per-process network)", null, async (_, _) => await RestartAsAdministratorAsync());
+            menu.Items.Add("Restart as administrator (CPU temperature, per-process network)", null, async (_, _) => await RestartAsAdministratorAsync());
+        }
+
+        if (!_pawnIoInstalled)
+        {
+            menu.Items.Add("Get the CPU temperature driver (PawnIO)...", null, (_, _) => ShowPawnIoHelp());
         }
 
         button.Click += (_, _) => menu.Show(button, new Point(button.Width - menu.Width, button.Height));
@@ -1055,7 +1090,7 @@ public sealed class MainForm : Form
         {
             Text = text,
             Dock = DockStyle.Fill,
-            ForeColor = Color.FromArgb(224, 225, 221),
+            ForeColor = Theme.TextTitle,
             Font = new Font(Font.FontFamily, 8.75F, FontStyle.Bold),
             TextAlign = alignment,
             Margin = new Padding(0),

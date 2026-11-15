@@ -1,9 +1,9 @@
 ﻿using System.Globalization;
 using System.IO;
 using System.Text;
-using PCMonitoring.App.Models;
+using Vitals.App.Models;
 
-namespace PCMonitoring.App.Services;
+namespace Vitals.App.Services;
 
 public sealed class LoggingSession
 {

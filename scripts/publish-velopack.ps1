@@ -1,13 +1,13 @@
 param(
     [Parameter(Mandatory = $true)]
     [string]$Version,
-    [string]$PackId = "TechArchive.PCMonitoring",
-    [string]$PackTitle = "TechArchive PC Monitoring",
+    [string]$PackId = "TechArchive.Vitals",
+    [string]$PackTitle = "TechArchive Vitals",
     [string]$Channel = "win",
     [string]$Runtime = "win-x64",
     [string]$Configuration = "Release",
-    [string]$MainExe = "PCMonitoring.App.exe",
-    [string]$Authors = "TechArchive",
+    [string]$MainExe = "Vitals.exe",
+    [string]$Authors = "Manggdy",
     [string]$DefaultUpdateSource = "https://tech.trendarchive.io/Utility/PC_Monitoring/",
     [string]$PublishDir = "",
     [string]$OutputDir = "",
@@ -78,7 +78,7 @@ function Convert-ToFileSafeName {
 
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Resolve-FullPath -BasePath $scriptRoot -Value ".."
-$projectPath = Resolve-FullPath -BasePath $repoRoot -Value "src\PCMonitoring.App\PCMonitoring.App.csproj"
+$projectPath = Resolve-FullPath -BasePath $repoRoot -Value "src\Vitals.App\Vitals.App.csproj"
 
 if ([string]::IsNullOrWhiteSpace($PublishDir)) {
     $PublishDir = "artifacts\publish\$Version\$Runtime"
@@ -105,7 +105,7 @@ New-Item -ItemType Directory -Force -Path (Split-Path -Parent $releaseNotesPath)
 
 if (-not (Test-Path $releaseNotesPath)) {
     @(
-        "# PC Monitoring $Version"
+        "# Vitals $Version"
         ""
         "- Add release notes here before shipping."
     ) | Set-Content -Path $releaseNotesPath -Encoding UTF8
@@ -156,6 +156,7 @@ Write-Host "Packing Velopack release into $outputDirPath"
     --channel $Channel `
     --runtime $Runtime `
     --framework net8.0-x64-desktop `
+    --icon (Join-Path $repoRoot "src\Vitals.App\Assets\AppIcon.ico") `
     --releaseNotes $releaseNotesPath `
     --outputDir $outputDirPath
 

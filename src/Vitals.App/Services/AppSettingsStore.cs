@@ -1,8 +1,8 @@
 using System.IO;
 using System.Text.Json;
-using PCMonitoring.App.Models;
+using Vitals.App.Models;
 
-namespace PCMonitoring.App.Services;
+namespace Vitals.App.Services;
 
 public static class AppSettingsStore
 {
@@ -12,7 +12,7 @@ public static class AppSettingsStore
     };
 
     public static string SettingsDirectory =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PCMonitoring");
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Vitals");
 
     public static string SettingsPath => Path.Combine(SettingsDirectory, "settings.json");
 

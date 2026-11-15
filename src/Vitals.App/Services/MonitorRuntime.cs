@@ -1,8 +1,8 @@
 using System.Threading.Channels;
-using PCMonitoring.App.Models;
-using PCMonitoring.App.Native;
+using Vitals.App.Models;
+using Vitals.App.Native;
 
-namespace PCMonitoring.App.Services;
+namespace Vitals.App.Services;
 
 public sealed class MonitorRuntime : IAsyncDisposable
 {

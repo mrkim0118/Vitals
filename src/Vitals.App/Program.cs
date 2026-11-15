@@ -2,7 +2,7 @@ using System;
 using System.Windows.Forms;
 using Velopack;
 
-namespace PCMonitoring.App;
+namespace Vitals.App;
 
 internal static class Program
 {

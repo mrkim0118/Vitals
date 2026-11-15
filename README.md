@@ -1,152 +1,123 @@
-# TechArchive PC Monitoring
+# TechArchive Vitals
 
-Compact Windows desktop monitor from TechArchive built around a low-overhead native collector with a small WinForms dashboard.
+A lightweight real-time PC monitor for Windows, by Manggdy.
 
-## Stack
+Vitals shows CPU, memory, disk, GPU and network activity with the same counters Task Manager uses. It is built to stay out of the way: a small C++ collector does the sampling, and the app shows its own CPU and memory use in the header so you can see what it costs.
 
-- `src\PCMonitoring.App`
-  - C# WinForms UI
-  - real-time dashboard
-  - timed summary logging
-  - Velopack update integration
-- `src\Monitoring.Native`
-  - C++ native collector DLL
-  - Windows APIs and PDH-based sampling
+## Features
 
-## Real-time metrics
+### Live cards
 
-- CPU usage
-- CPU temperature when exposed by the system
-- Memory usage percent and used capacity
-- Disk usage percent, free space, read speed, and write speed
-- GPU usage percent and dedicated VRAM usage
-- GPU temperature when exposed by the system
-- Network receive and send speed
-- Top 5 processes by CPU usage
+Each card shows the current value, a usage bar and a 60-second trend graph. The value and bar turn orange above 60% and red above 85%.
 
-## Logging
+| Card | Shows |
+|---|---|
+| CPU | Usage, clock speed including turbo, temperature |
+| Memory | Usage, used and total |
+| Disk | Active time, read and write speed, free space |
+| GPU | Busiest engine usage, dedicated VRAM, temperature |
+| Network | Download and upload speed on physical adapters, totals |
+| Log | Recording state, elapsed and remaining time |
 
-Enter a duration in `hh:mm:ss` format and click `Start Log`.
+### Top Processes
 
-The app creates one session folder per run under the configured log root and saves:
+- Shows the top 10 processes.
+- Click a column header to sort by PID, name, CPU, GPU, memory, disk or network. Click it again to reverse the order.
+- Covers every active process, not only the busiest by CPU.
+- Disk is file I/O per second, including reads served from cache, so it can be higher than Task Manager's disk column.
+- Network per process needs administrator rights (see below) and shows N/A otherwise.
 
-- `summary.txt`
+### Logging
 
-The summary file contains:
+1. Enter a duration (`h:mm:ss`; more than 24 hours is fine), or click `10 min`, `30 min` or `1 hour`.
+2. Click `Start Log`.
+3. When the timer ends, `summary.txt` is saved automatically. `Stop & Save` saves early. `Discard` deletes the session.
 
-- min / max / average values for the tracked resource metrics
-- the top 5 processes ranked by cumulative CPU usage over the entire logging session
+`summary.txt` holds min, max and average for each metric, plus the top 5 processes by CPU over the whole session.
 
-The default log root is:
+Logs and settings are stored in:
 
 ```text
-%LocalAppData%\PCMonitoring\logs
+%LocalAppData%\Vitals
 ```
 
-You can change the log root inside the app and open it directly with the `Open Folder` button.
+### Administrator mode
 
-## Low-memory design
+Some data needs administrator rights. Use `⋯` → `Restart as administrator`. A running log is saved before the restart.
 
-The current build keeps overhead down with:
+| Data | Needs |
+|---|---|
+| CPU temperature | Administrator rights and the [PawnIO](https://pawnio.eu/) driver |
+| Network per process | Administrator rights (it uses an ETW trace session) |
 
-- WinForms instead of the earlier WPF UI
-- a compact `ListView` for top processes
-- a bounded single-item snapshot channel to avoid UI backlog
-- slower top-process refresh than the core sampler
-- cached temperature reads on the native side
-- configuration stored under `%LocalAppData%` so logs and settings survive app updates
-
-## Build
+CPU temperature is read by LibreHardwareMonitor through PawnIO, a signed kernel driver. Install it once per PC:
 
 ```powershell
-dotnet build .\src\PCMonitoring.App\PCMonitoring.App.csproj -c Debug
+winget install namazso.PawnIO
 ```
 
-## Run
+When something is missing, the CPU card says which: `N/A (needs PawnIO driver)` or `N/A (run as admin)`.
+
+## Keeping its own load low
+
+- The native collector uses PDH counters, IP Helper and process APIs, and no WMI.
+- Processes are sampled every 3 seconds; system metrics every second.
+- The window stops redrawing while minimized.
+- Each card is one owner-drawn control instead of a tree of WinForms controls.
+- The ETW network session runs only in administrator mode and stops when the app closes.
+
+## Project layout
+
+| Path | Contents |
+|---|---|
+| `src\Vitals.App` | C# WinForms app (.NET 8, x64) |
+| `src\Vitals.Native` | C++ collector DLL (`Vitals.Native.dll`) |
+| `scripts\publish-velopack.ps1` | Builds a release and installer |
+| `scripts\build-native.ps1` | Builds the native DLL (called by the app build) |
+
+## Build and run
+
+Needs the .NET 8 SDK and Visual Studio 2022 with the C++ desktop workload. The app build compiles the native DLL first.
 
 ```powershell
-.\src\PCMonitoring.App\bin\Debug\net8.0-windows\PCMonitoring.App.exe
+dotnet build .\src\Vitals.App\Vitals.App.csproj -c Release
+.\src\Vitals.App\bin\Release\net8.0-windows\Vitals.exe
 ```
 
-## Velopack Auto Update
+Build the app project, not `Vitals.sln`: the `dotnet` CLI cannot build the C++ project directly.
 
-The app can check for updates from either:
+## Releases and auto-update
 
-- an `https://...` feed URL
-- a local or network folder path that contains the Velopack release feed
-
-Important notes:
-
-- auto-update only works when the app was installed from a Velopack installer
-- a plain `dotnet publish` folder or copied `.exe` will show the UI but cannot self-update
-
-Inside the app:
-
-- set `Update source (URL or folder)`
-- optionally keep `Auto check on startup` enabled
-- click `Check Updates` to test immediately
-
-If a default update source is embedded at build time, the installed app will automatically check for updates shortly after startup. When a newer version exists, it asks the user whether to continue. If the user confirms, the app downloads the update and restarts automatically.
-
-### Package a release
-
-Install the Velopack CLI once:
+Releases use [Velopack](https://velopack.io/). Install the CLI once:
 
 ```powershell
 dotnet tool install -g vpk
 ```
 
-Then create a release package:
+Create a release (write `artifacts\velopack\release-notes-<version>.md` first):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\publish-velopack.ps1 -Version 1.0.0
+powershell -ExecutionPolicy Bypass -File .\scripts\publish-velopack.ps1 -Version 1.0.13
 ```
 
-To embed the production update feed directly into the app:
+The script:
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\publish-velopack.ps1 -Version 1.0.0 -DefaultUpdateSource "https://tech.trendarchive.io/Utility/PC_Monitoring/"
-```
+- publishes a framework-dependent `win-x64` build without `.pdb` files
+- builds the installer with the app icon and the update feed
+- makes the installer and updater install the x64 .NET 8 Desktop Runtime when it is missing
+- stamps the update URL (`-DefaultUpdateSource`) into `app-defaults.json`
 
-This script will:
+Output:
 
-- publish a framework-dependent `win-x64` build
-- exclude `.pdb` debug symbols from the release package
-- create a Velopack installer and release feed
-- optionally stamp a default update source into the build
+| Path | Contents |
+|---|---|
+| `artifacts\publish\<version>\win-x64` | Published app files |
+| `artifacts\velopack\Releases` | Installer, packages and `releases.win.json` |
 
-The app needs the x64 [.NET 8 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0). The installer and auto-update install it automatically when it is missing.
+To ship an update, upload everything in `artifacts\velopack\Releases` to the update URL (default `https://tech.trendarchive.io/Utility/PC_Monitoring/`). Installed copies check for updates shortly after startup and from `⋯` → `Check for updates`, then ask before downloading and restarting.
 
-Default output locations:
+Notes:
 
-- publish files: `artifacts\publish\<version>\win-x64`
-- Velopack feed and installers: `artifacts\velopack\Releases`
-
-### Test updates locally
-
-1. Build version `1.0.0` with the script above.
-2. Install the generated setup from `artifacts\velopack\Releases`.
-3. In the app, set `Update source (URL or folder)` to:
-
-```text
-C:\Users\mrkim\Desktop\codex\PC Monitoring\artifacts\velopack\Releases
-```
-
-4. Build a higher version, for example:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\publish-velopack.ps1 -Version 1.0.1
-```
-
-5. Run `Check Updates` in the installed app.
-
-### Host updates remotely
-
-Upload the contents of `artifacts\velopack\Releases` to a static file host or release store and point the app to that URL. Velopack will read the channel feed file such as `releases.win.json` and download the matching packages.
-
-### Release an update as the distributor
-
-1. Pick the next version number such as `1.0.1`.
-2. Run `publish-velopack.ps1` with the same `-DefaultUpdateSource` you used for the installed build.
-3. Upload the new contents of `artifacts\velopack\Releases` to the same update location.
-4. Existing installed users will be prompted on next startup and can update in-place.
+- Auto-update only works in a copy installed from the Velopack installer, not in a build or publish folder.
+- vpk 0.0.1298 fails to pack when release notes contain `&`. Write "and" instead.
+- To test updates locally, build with `-DefaultUpdateSource "<full path>\artifacts\velopack\Releases"`, install it, then build a higher version.

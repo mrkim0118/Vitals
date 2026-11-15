@@ -1,4 +1,4 @@
-namespace PCMonitoring.App.Models;
+namespace Vitals.App.Models;
 
 public sealed class AppSettings
 {

@@ -1,7 +1,7 @@
 #define _WIN32_WINNT 0x0A00
 #define NOMINMAX
 
-#include "MonitoringNativeExports.h"
+#include "VitalsNativeExports.h"
 
 // winsock2/ws2ipdef must precede iphlpapi so netioapi.h (GetIfTable2) gets its types.
 #include <winsock2.h>
@@ -83,7 +83,7 @@ namespace
     // needs admin rights, so this stays off for a normal user and the UI shows N/A.
     namespace ProcessNetwork
     {
-        constexpr wchar_t SessionName[] = L"TechArchivePCMonitoringNet";
+        constexpr wchar_t SessionName[] = L"TechArchiveVitalsNet";
         constexpr GUID KernelNetworkProvider =
             { 0x7dd42a49, 0x5329, 0x4832, { 0x8d, 0xfd, 0x43, 0xd9, 0x79, 0x15, 0x3a, 0x88 } };
 

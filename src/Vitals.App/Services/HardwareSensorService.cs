@@ -1,7 +1,7 @@
 using LibreHardwareMonitor.Hardware;
-using PCMonitoring.App.Models;
+using Vitals.App.Models;
 
-namespace PCMonitoring.App.Services;
+namespace Vitals.App.Services;
 
 public sealed class HardwareSensorService : IDisposable
 {

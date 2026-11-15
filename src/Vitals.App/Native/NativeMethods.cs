@@ -1,7 +1,7 @@
 using System.Runtime.InteropServices;
-using PCMonitoring.App.Models;
+using Vitals.App.Models;
 
-namespace PCMonitoring.App.Native;
+namespace Vitals.App.Native;
 
 internal static class NativeMethods
 {
@@ -76,19 +76,19 @@ internal static class NativeMethods
         public double NetworkBytesPerSecond;
     }
 
-    [DllImport("Monitoring.Native.dll", CallingConvention = CallingConvention.Cdecl)]
+    [DllImport("Vitals.Native.dll", CallingConvention = CallingConvention.Cdecl)]
     private static extern int InitializeMonitor();
 
-    [DllImport("Monitoring.Native.dll", CallingConvention = CallingConvention.Cdecl)]
+    [DllImport("Vitals.Native.dll", CallingConvention = CallingConvention.Cdecl)]
     private static extern void ShutdownMonitor();
 
-    [DllImport("Monitoring.Native.dll", CallingConvention = CallingConvention.Cdecl)]
+    [DllImport("Vitals.Native.dll", CallingConvention = CallingConvention.Cdecl)]
     private static extern int SampleSystemSnapshot(out SystemSnapshotNative snapshot);
 
-    [DllImport("Monitoring.Native.dll", CallingConvention = CallingConvention.Cdecl)]
+    [DllImport("Vitals.Native.dll", CallingConvention = CallingConvention.Cdecl)]
     private static extern int SampleTopProcesses([Out] ProcessSnapshotNative[] buffer, int capacity, out int written);
 
-    [DllImport("Monitoring.Native.dll", CallingConvention = CallingConvention.Cdecl)]
+    [DllImport("Vitals.Native.dll", CallingConvention = CallingConvention.Cdecl)]
     private static extern int IsProcessNetworkAvailable();
 
     public static bool Initialize() => InitializeMonitor() == 1;

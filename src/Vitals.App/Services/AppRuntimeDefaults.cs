@@ -1,7 +1,7 @@
 using System.IO;
 using System.Text.Json;
 
-namespace PCMonitoring.App.Services;
+namespace Vitals.App.Services;
 
 internal static class AppRuntimeDefaults
 {

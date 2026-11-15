@@ -5,9 +5,9 @@ VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{A082D8A5-C1D7-476D-B6EE-FBEF72DE08FE}"
 EndProject
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Monitoring.Native", "src\Monitoring.Native\Monitoring.Native.vcxproj", "{CA21E3AF-D3D8-4E53-96BC-0C46DB985408}"
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Vitals.Native", "src\Vitals.Native\Vitals.Native.vcxproj", "{CA21E3AF-D3D8-4E53-96BC-0C46DB985408}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PCMonitoring.App", "src\PCMonitoring.App\PCMonitoring.App.csproj", "{D5862885-79D8-47FC-878A-67693DBB3BF0}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Vitals.App", "src\Vitals.App\Vitals.App.csproj", "{D5862885-79D8-47FC-878A-67693DBB3BF0}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

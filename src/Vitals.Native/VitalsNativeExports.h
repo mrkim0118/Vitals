@@ -2,10 +2,10 @@
 
 #include <stdint.h>
 
-#ifdef MONITORING_NATIVE_EXPORTS
-#define MONITORING_API extern "C" __declspec(dllexport)
+#ifdef VITALS_NATIVE_EXPORTS
+#define VITALS_API extern "C" __declspec(dllexport)
 #else
-#define MONITORING_API extern "C" __declspec(dllimport)
+#define VITALS_API extern "C" __declspec(dllimport)
 #endif
 
 struct CpuMetricsNative
@@ -69,8 +69,8 @@ struct ProcessSnapshotNative
     double NetworkBytesPerSecond;
 };
 
-MONITORING_API int InitializeMonitor();
-MONITORING_API void ShutdownMonitor();
-MONITORING_API int SampleSystemSnapshot(SystemSnapshotNative* snapshot);
-MONITORING_API int SampleTopProcesses(ProcessSnapshotNative* buffer, int capacity, int* written);
-MONITORING_API int IsProcessNetworkAvailable();
+VITALS_API int InitializeMonitor();
+VITALS_API void ShutdownMonitor();
+VITALS_API int SampleSystemSnapshot(SystemSnapshotNative* snapshot);
+VITALS_API int SampleTopProcesses(ProcessSnapshotNative* buffer, int capacity, int* written);
+VITALS_API int IsProcessNetworkAvailable();

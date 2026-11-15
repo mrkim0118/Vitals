@@ -8,21 +8,23 @@
     <UseWindowsForms>true</UseWindowsForms>
     <PlatformTarget>x64</PlatformTarget>
     <Prefer32Bit>false</Prefer32Bit>
-    <StartupObject>PCMonitoring.App.Program</StartupObject>
-    <Company>TechArchive</Company>
-    <Authors>TechArchive</Authors>
-    <Product>TechArchive PC Monitoring</Product>
-    <AssemblyTitle>TechArchive PC Monitoring</AssemblyTitle>
-    <Description>TechArchive real-time PC resource monitoring tool.</Description>
+    <AssemblyName>Vitals</AssemblyName>
+    <RootNamespace>Vitals.App</RootNamespace>
+    <StartupObject>Vitals.App.Program</StartupObject>
+    <Company>Manggdy</Company>
+    <Authors>Manggdy</Authors>
+    <Product>TechArchive Vitals</Product>
+    <AssemblyTitle>TechArchive Vitals</AssemblyTitle>
+    <Description>Real-time PC resource monitor by Manggdy.</Description>
     <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
   </PropertyGroup>
 
   <PropertyGroup>
-    <NativeProjectPath>..\Monitoring.Native\Monitoring.Native.vcxproj</NativeProjectPath>
+    <NativeProjectPath>..\Vitals.Native\Vitals.Native.vcxproj</NativeProjectPath>
     <NativeBuildConfiguration Condition="'$(Configuration)' == ''">Debug</NativeBuildConfiguration>
     <NativeBuildConfiguration Condition="'$(Configuration)' != ''">$(Configuration)</NativeBuildConfiguration>
     <VisualStudioMsBuildPath Condition="Exists('C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\MSBuild.exe')">C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\MSBuild.exe</VisualStudioMsBuildPath>
-    <NativeOutputPath>$(MSBuildProjectDirectory)\..\..\artifacts\native\$(NativeBuildConfiguration)\Monitoring.Native.dll</NativeOutputPath>
+    <NativeOutputPath>$(MSBuildProjectDirectory)\..\..\artifacts\native\$(NativeBuildConfiguration)\Vitals.Native.dll</NativeOutputPath>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">
