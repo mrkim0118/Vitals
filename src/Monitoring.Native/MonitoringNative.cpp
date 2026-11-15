@@ -1,29 +1,29 @@
 #define _WIN32_WINNT 0x0A00
 #define NOMINMAX
-#define _WIN32_DCOM
 
 #include "MonitoringNativeExports.h"
 
+// winsock2/ws2ipdef must precede iphlpapi so netioapi.h (GetIfTable2) gets its types.
+#include <winsock2.h>
+#include <ws2ipdef.h>
 #include <windows.h>
 #include <iphlpapi.h>
 #include <pdh.h>
 #include <pdhmsg.h>
 #include <psapi.h>
 #include <tlhelp32.h>
-#include <wbemidl.h>
-#include <comdef.h>
 
 #include <algorithm>
 #include <cmath>
 #include <cwchar>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
 #pragma comment(lib, "iphlpapi.lib")
 #pragma comment(lib, "pdh.lib")
-#pragma comment(lib, "wbemuuid.lib")
 #pragma comment(lib, "psapi.lib")
 
 namespace
@@ -48,8 +48,12 @@ namespace
         FILETIME LastUserTime{};
         bool CpuBaselineReady = false;
 
+        PDH_HQUERY CpuQuery = nullptr;
+        PDH_HCOUNTER CpuPerformanceCounter = nullptr;
+        PDH_HCOUNTER CpuBaseFrequencyCounter = nullptr;
+
         PDH_HQUERY DiskQuery = nullptr;
-        PDH_HCOUNTER DiskUsageCounter = nullptr;
+        PDH_HCOUNTER DiskIdleCounter = nullptr;
         PDH_HCOUNTER DiskReadCounter = nullptr;
         PDH_HCOUNTER DiskWriteCounter = nullptr;
 
@@ -60,14 +64,8 @@ namespace
 
         NetworkState Network{};
         std::unordered_map<uint32_t, ProcessState> ProcessTimes;
-        uint64_t LastProcessSampleMilliseconds = 0;
-        uint64_t LastCpuTemperatureQueryMilliseconds = 0;
-        double CachedCpuTemperatureCelsius = 0.0;
-        bool CachedCpuTemperatureAvailable = false;
-        uint64_t LastCpuClockQueryMilliseconds = 0;
-        double CachedCpuClockMHz = 0.0;
-        bool CachedCpuClockAvailable = false;
-        SYSTEM_INFO SystemInfo{};
+        uint64_t LastProcessSampleTick = 0;
+        DWORD ProcessorCount = 1;
         bool Initialized = false;
     };
 
@@ -163,6 +161,50 @@ namespace
         return total;
     }
 
+    // Instances look like "pid_1234_luid_0x0_0xC5E5_phys_0_eng_3_engtype_3D".
+    // Summing every instance double-counts engines that run in parallel, so group by engine.
+    double QueryGpuBusiestEngine(PDH_HCOUNTER counter)
+    {
+        DWORD bufferSize = 0;
+        DWORD itemCount = 0;
+        PDH_STATUS status = PdhGetFormattedCounterArrayW(counter, PDH_FMT_DOUBLE, &bufferSize, &itemCount, nullptr);
+        if (status != PDH_MORE_DATA || bufferSize == 0 || itemCount == 0)
+        {
+            return 0.0;
+        }
+
+        std::vector<BYTE> buffer(bufferSize);
+        auto* values = reinterpret_cast<PDH_FMT_COUNTERVALUE_ITEM_W*>(buffer.data());
+        status = PdhGetFormattedCounterArrayW(counter, PDH_FMT_DOUBLE, &bufferSize, &itemCount, values);
+        if (status != ERROR_SUCCESS)
+        {
+            return 0.0;
+        }
+
+        std::unordered_map<std::wstring, double> engineTotals;
+        double busiest = 0.0;
+        for (DWORD i = 0; i < itemCount; ++i)
+        {
+            if (values[i].FmtValue.CStatus != ERROR_SUCCESS || values[i].szName == nullptr)
+            {
+                continue;
+            }
+
+            const std::wstring_view name(values[i].szName);
+            const size_t luid = name.find(L"luid_");
+            const size_t type = name.find(L"_engtype_");
+            const std::wstring key(luid == std::wstring_view::npos
+                ? name
+                : name.substr(luid, type == std::wstring_view::npos ? std::wstring_view::npos : type - luid));
+
+            double& total = engineTotals[key];
+            total += values[i].FmtValue.doubleValue;
+            busiest = std::max(busiest, total);
+        }
+
+        return busiest;
+    }
+
     void QueryDriveSpace(uint64_t& totalBytes, uint64_t& freeBytes)
     {
         totalBytes = 0;
@@ -205,16 +247,8 @@ namespace
         network.TotalReceivedBytes = 0;
         network.TotalSentBytes = 0;
 
-        ULONG tableSize = 0;
-        GetIfTable(nullptr, &tableSize, FALSE);
-        if (tableSize == 0)
-        {
-            return;
-        }
-
-        std::vector<BYTE> tableBuffer(tableSize);
-        auto* table = reinterpret_cast<MIB_IFTABLE*>(tableBuffer.data());
-        if (GetIfTable(table, &tableSize, FALSE) != NO_ERROR)
+        MIB_IF_TABLE2* table = nullptr;
+        if (GetIfTable2(&table) != NO_ERROR || table == nullptr)
         {
             return;
         }
@@ -222,28 +256,28 @@ namespace
         uint64_t totalIn = 0;
         uint64_t totalOut = 0;
 
-        for (DWORD i = 0; i < table->dwNumEntries; ++i)
+        for (ULONG i = 0; i < table->NumEntries; ++i)
         {
-            const MIB_IFROW& row = table->table[i];
-            if (row.dwOperStatus != IF_OPER_STATUS_OPERATIONAL)
+            const MIB_IF_ROW2& row = table->Table[i];
+            if (row.OperStatus != IfOperStatusUp ||
+                !row.InterfaceAndOperStatusFlags.HardwareInterface ||
+                row.InterfaceAndOperStatusFlags.FilterInterface)
             {
                 continue;
             }
 
-            if (row.dwType == IF_TYPE_SOFTWARE_LOOPBACK || row.dwType == IF_TYPE_TUNNEL)
-            {
-                continue;
-            }
-
-            totalIn += row.dwInOctets;
-            totalOut += row.dwOutOctets;
+            totalIn += row.InOctets;
+            totalOut += row.OutOctets;
         }
 
-        const uint64_t now = GetUtcMilliseconds();
+        FreeMibTable(table);
+
+        const uint64_t now = GetTickCount64();
         network.TotalReceivedBytes = totalIn;
         network.TotalSentBytes = totalOut;
 
-        if (g_state.Network.HasBaseline)
+        // Totals drop when an adapter goes away or resets; skip that sample instead of reporting garbage.
+        if (g_state.Network.HasBaseline && totalIn >= g_state.Network.InOctets && totalOut >= g_state.Network.OutOctets)
         {
             const double elapsedSeconds = static_cast<double>(now - g_state.Network.TimestampMilliseconds) / 1000.0;
             if (elapsedSeconds > 0.0)
@@ -298,302 +332,19 @@ namespace
         return std::clamp(usage, 0.0, 100.0);
     }
 
-    double QueryCpuTemperature(bool& available)
+    // Same formula as Task Manager "Speed": nominal MHz x % Processor Performance (includes turbo).
+    double QueryCpuClockSpeedMHz()
     {
-        available = false;
-
-        HRESULT initResult = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-        const bool shouldUninitialize = SUCCEEDED(initResult);
-        if (FAILED(initResult) && initResult != RPC_E_CHANGED_MODE)
+        if (g_state.CpuQuery == nullptr)
         {
             return 0.0;
         }
 
-        HRESULT hr = CoInitializeSecurity(
-            nullptr,
-            -1,
-            nullptr,
-            nullptr,
-            RPC_C_AUTHN_LEVEL_DEFAULT,
-            RPC_C_IMP_LEVEL_IMPERSONATE,
-            nullptr,
-            EOAC_NONE,
-            nullptr);
-
-        if (FAILED(hr) && hr != RPC_E_TOO_LATE)
-        {
-            if (shouldUninitialize)
-            {
-                CoUninitialize();
-            }
-            return 0.0;
-        }
-
-        IWbemLocator* locator = nullptr;
-        hr = CoCreateInstance(CLSID_WbemLocator, nullptr, CLSCTX_INPROC_SERVER, IID_IWbemLocator, reinterpret_cast<void**>(&locator));
-        if (FAILED(hr) || locator == nullptr)
-        {
-            if (shouldUninitialize)
-            {
-                CoUninitialize();
-            }
-            return 0.0;
-        }
-
-        IWbemServices* services = nullptr;
-        hr = locator->ConnectServer(
-            _bstr_t(L"ROOT\\WMI"),
-            nullptr,
-            nullptr,
-            nullptr,
-            0,
-            nullptr,
-            nullptr,
-            &services);
-
-        if (FAILED(hr) || services == nullptr)
-        {
-            locator->Release();
-            if (shouldUninitialize)
-            {
-                CoUninitialize();
-            }
-            return 0.0;
-        }
-
-        CoSetProxyBlanket(
-            services,
-            RPC_C_AUTHN_WINNT,
-            RPC_C_AUTHZ_NONE,
-            nullptr,
-            RPC_C_AUTHN_LEVEL_CALL,
-            RPC_C_IMP_LEVEL_IMPERSONATE,
-            nullptr,
-            EOAC_NONE);
-
-        IEnumWbemClassObject* enumerator = nullptr;
-        hr = services->ExecQuery(
-            _bstr_t(L"WQL"),
-            _bstr_t(L"SELECT CurrentTemperature FROM MSAcpi_ThermalZoneTemperature"),
-            WBEM_FLAG_FORWARD_ONLY | WBEM_FLAG_RETURN_IMMEDIATELY,
-            nullptr,
-            &enumerator);
-
-        double totalTemperature = 0.0;
-        double count = 0.0;
-
-        if (SUCCEEDED(hr) && enumerator != nullptr)
-        {
-            while (true)
-            {
-                IWbemClassObject* instance = nullptr;
-                ULONG returned = 0;
-                hr = enumerator->Next(2000, 1, &instance, &returned);
-                if (FAILED(hr) || returned == 0 || instance == nullptr)
-                {
-                    break;
-                }
-
-                VARIANT value{};
-                VariantInit(&value);
-                if (SUCCEEDED(instance->Get(L"CurrentTemperature", 0, &value, nullptr, nullptr)))
-                {
-                    if (value.vt == VT_I4 || value.vt == VT_UI4)
-                    {
-                        const double celsius = (static_cast<double>(value.ulVal) / 10.0) - 273.15;
-                        if (celsius > -40.0 && celsius < 150.0)
-                        {
-                            totalTemperature += celsius;
-                            count += 1.0;
-                        }
-                    }
-                }
-
-                VariantClear(&value);
-                instance->Release();
-            }
-
-            enumerator->Release();
-        }
-
-        services->Release();
-        locator->Release();
-
-        if (shouldUninitialize)
-        {
-            CoUninitialize();
-        }
-
-        if (count > 0.0)
-        {
-            available = true;
-            return totalTemperature / count;
-        }
-
-        return 0.0;
-    }
-
-    double QueryCpuClockSpeedMHz(bool& available)
-    {
-        available = false;
-
-        HRESULT initResult = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-        const bool shouldUninitialize = SUCCEEDED(initResult);
-        if (FAILED(initResult) && initResult != RPC_E_CHANGED_MODE)
-        {
-            return 0.0;
-        }
-
-        HRESULT hr = CoInitializeSecurity(
-            nullptr,
-            -1,
-            nullptr,
-            nullptr,
-            RPC_C_AUTHN_LEVEL_DEFAULT,
-            RPC_C_IMP_LEVEL_IMPERSONATE,
-            nullptr,
-            EOAC_NONE,
-            nullptr);
-
-        if (FAILED(hr) && hr != RPC_E_TOO_LATE)
-        {
-            if (shouldUninitialize)
-            {
-                CoUninitialize();
-            }
-            return 0.0;
-        }
-
-        IWbemLocator* locator = nullptr;
-        hr = CoCreateInstance(CLSID_WbemLocator, nullptr, CLSCTX_INPROC_SERVER, IID_IWbemLocator, reinterpret_cast<void**>(&locator));
-        if (FAILED(hr) || locator == nullptr)
-        {
-            if (shouldUninitialize)
-            {
-                CoUninitialize();
-            }
-            return 0.0;
-        }
-
-        IWbemServices* services = nullptr;
-        hr = locator->ConnectServer(
-            _bstr_t(L"ROOT\\CIMV2"),
-            nullptr,
-            nullptr,
-            nullptr,
-            0,
-            nullptr,
-            nullptr,
-            &services);
-
-        if (FAILED(hr) || services == nullptr)
-        {
-            locator->Release();
-            if (shouldUninitialize)
-            {
-                CoUninitialize();
-            }
-            return 0.0;
-        }
-
-        CoSetProxyBlanket(
-            services,
-            RPC_C_AUTHN_WINNT,
-            RPC_C_AUTHZ_NONE,
-            nullptr,
-            RPC_C_AUTHN_LEVEL_CALL,
-            RPC_C_IMP_LEVEL_IMPERSONATE,
-            nullptr,
-            EOAC_NONE);
-
-        IEnumWbemClassObject* enumerator = nullptr;
-        hr = services->ExecQuery(
-            _bstr_t(L"WQL"),
-            _bstr_t(L"SELECT CurrentClockSpeed FROM Win32_Processor"),
-            WBEM_FLAG_FORWARD_ONLY | WBEM_FLAG_RETURN_IMMEDIATELY,
-            nullptr,
-            &enumerator);
-
-        double totalClock = 0.0;
-        double count = 0.0;
-
-        if (SUCCEEDED(hr) && enumerator != nullptr)
-        {
-            while (true)
-            {
-                IWbemClassObject* instance = nullptr;
-                ULONG returned = 0;
-                hr = enumerator->Next(2000, 1, &instance, &returned);
-                if (FAILED(hr) || returned == 0 || instance == nullptr)
-                {
-                    break;
-                }
-
-                VARIANT value{};
-                VariantInit(&value);
-                if (SUCCEEDED(instance->Get(L"CurrentClockSpeed", 0, &value, nullptr, nullptr)))
-                {
-                    if (value.vt == VT_I4 || value.vt == VT_UI4)
-                    {
-                        const double mhz = static_cast<double>(value.ulVal);
-                        if (mhz > 0.0 && mhz < 20000.0)
-                        {
-                            totalClock += mhz;
-                            count += 1.0;
-                        }
-                    }
-                }
-
-                VariantClear(&value);
-                instance->Release();
-            }
-
-            enumerator->Release();
-        }
-
-        services->Release();
-        locator->Release();
-
-        if (shouldUninitialize)
-        {
-            CoUninitialize();
-        }
-
-        if (count > 0.0)
-        {
-            available = true;
-            return totalClock / count;
-        }
-
-        return 0.0;
-    }
-
-    double QueryCachedCpuTemperature(bool& available)
-    {
-        const uint64_t now = GetUtcMilliseconds();
-        if (g_state.LastCpuTemperatureQueryMilliseconds == 0 ||
-            (now - g_state.LastCpuTemperatureQueryMilliseconds) >= 5000ULL)
-        {
-            g_state.CachedCpuTemperatureCelsius = QueryCpuTemperature(g_state.CachedCpuTemperatureAvailable);
-            g_state.LastCpuTemperatureQueryMilliseconds = now;
-        }
-
-        available = g_state.CachedCpuTemperatureAvailable;
-        return g_state.CachedCpuTemperatureCelsius;
-    }
-
-    double QueryCachedCpuClockSpeedMHz(bool& available)
-    {
-        const uint64_t now = GetUtcMilliseconds();
-        if (g_state.LastCpuClockQueryMilliseconds == 0 ||
-            (now - g_state.LastCpuClockQueryMilliseconds) >= 3000ULL)
-        {
-            g_state.CachedCpuClockMHz = QueryCpuClockSpeedMHz(g_state.CachedCpuClockAvailable);
-            g_state.LastCpuClockQueryMilliseconds = now;
-        }
-
-        available = g_state.CachedCpuClockAvailable;
-        return g_state.CachedCpuClockMHz;
+        PdhCollectQueryData(g_state.CpuQuery);
+        const double baseMHz = QuerySingleCounter(g_state.CpuBaseFrequencyCounter);
+        const double performancePercent = QuerySingleCounter(g_state.CpuPerformanceCounter);
+        const double mhz = baseMHz * performancePercent / 100.0;
+        return (mhz > 0.0 && mhz < 20000.0) ? mhz : 0.0;
     }
 
     void SampleMemory(MemoryMetricsNative& memory)
@@ -615,7 +366,7 @@ namespace
         if (g_state.DiskQuery != nullptr)
         {
             PdhCollectQueryData(g_state.DiskQuery);
-            disk.UsagePercent = std::clamp(QuerySingleCounter(g_state.DiskUsageCounter), 0.0, 100.0);
+            disk.UsagePercent = std::clamp(100.0 - QuerySingleCounter(g_state.DiskIdleCounter), 0.0, 100.0);
             disk.ReadBytesPerSecond = std::max(0.0, QuerySingleCounter(g_state.DiskReadCounter));
             disk.WriteBytesPerSecond = std::max(0.0, QuerySingleCounter(g_state.DiskWriteCounter));
         }
@@ -634,7 +385,7 @@ namespace
         }
 
         PdhCollectQueryData(g_state.GpuQuery);
-        const double utilization = QueryWildcardCounterTotal(g_state.GpuUtilizationCounter);
+        const double utilization = QueryGpuBusiestEngine(g_state.GpuUtilizationCounter);
         gpu.UsagePercent = std::clamp(utilization, 0.0, 100.0);
         gpu.DedicatedMemoryBytes = static_cast<uint64_t>(std::max(0.0, QueryWildcardCounterTotal(g_state.GpuDedicatedMemoryCounter)));
     }
@@ -644,7 +395,7 @@ namespace
         const bool diskReady = OpenCounterQuery(
             &g_state.DiskQuery,
             {
-                {L"\\PhysicalDisk(_Total)\\% Disk Time", &g_state.DiskUsageCounter},
+                {L"\\PhysicalDisk(_Total)\\% Idle Time", &g_state.DiskIdleCounter},
                 {L"\\PhysicalDisk(_Total)\\Disk Read Bytes/sec", &g_state.DiskReadCounter},
                 {L"\\PhysicalDisk(_Total)\\Disk Write Bytes/sec", &g_state.DiskWriteCounter},
             });
@@ -657,11 +408,26 @@ namespace
             });
 
         g_state.GpuCountersAvailable = gpuReady;
+
+        // Optional: clock shows N/A if this counter set is missing.
+        OpenCounterQuery(
+            &g_state.CpuQuery,
+            {
+                {L"\\Processor Information(_Total)\\% Processor Performance", &g_state.CpuPerformanceCounter},
+                {L"\\Processor Information(_Total)\\Processor Frequency", &g_state.CpuBaseFrequencyCounter},
+            });
+
         return diskReady;
     }
 
     void ClosePdh()
     {
+        if (g_state.CpuQuery != nullptr)
+        {
+            PdhCloseQuery(g_state.CpuQuery);
+            g_state.CpuQuery = nullptr;
+        }
+
         if (g_state.DiskQuery != nullptr)
         {
             PdhCloseQuery(g_state.DiskQuery);
@@ -685,7 +451,7 @@ int InitializeMonitor()
     }
 
     g_state = MonitorState{};
-    GetSystemInfo(&g_state.SystemInfo);
+    g_state.ProcessorCount = std::max<DWORD>(1, GetActiveProcessorCount(ALL_PROCESSOR_GROUPS));
 
     if (!TryInitializePdh())
     {
@@ -721,15 +487,7 @@ int SampleSystemSnapshot(SystemSnapshotNative* snapshot)
     ZeroMemory(snapshot, sizeof(SystemSnapshotNative));
     snapshot->TimestampUtcMilliseconds = static_cast<int64_t>(GetUtcMilliseconds());
     snapshot->Cpu.UsagePercent = QueryCpuUsage();
-    bool cpuClockAvailable = false;
-    snapshot->Cpu.CurrentClockSpeedMHz = QueryCachedCpuClockSpeedMHz(cpuClockAvailable);
-    if (!cpuClockAvailable)
-    {
-        snapshot->Cpu.CurrentClockSpeedMHz = 0.0;
-    }
-    bool cpuTemperatureAvailable = false;
-    snapshot->Cpu.TemperatureCelsius = QueryCachedCpuTemperature(cpuTemperatureAvailable);
-    snapshot->Cpu.TemperatureAvailable = cpuTemperatureAvailable ? 1 : 0;
+    snapshot->Cpu.CurrentClockSpeedMHz = QueryCpuClockSpeedMHz();
     SampleMemory(snapshot->Memory);
     SampleDisk(snapshot->Disk);
     SampleGpu(snapshot->Gpu);
@@ -759,11 +517,11 @@ int SampleTopProcesses(ProcessSnapshotNative* buffer, int capacity, int* written
     PROCESSENTRY32W entry{};
     entry.dwSize = sizeof(entry);
 
-    const uint64_t now = GetUtcMilliseconds();
-    const bool hasBaseline = g_state.LastProcessSampleMilliseconds != 0;
+    const uint64_t now = GetTickCount64();
+    const bool hasBaseline = g_state.LastProcessSampleTick != 0;
     const double elapsedSeconds =
-        hasBaseline ? static_cast<double>(now - g_state.LastProcessSampleMilliseconds) / 1000.0 : 0.0;
-    g_state.LastProcessSampleMilliseconds = now;
+        hasBaseline ? static_cast<double>(now - g_state.LastProcessSampleTick) / 1000.0 : 0.0;
+    g_state.LastProcessSampleTick = now;
 
     std::unordered_map<uint32_t, ProcessState> nextState;
     std::vector<ProcessSnapshotNative> candidates;
@@ -772,7 +530,7 @@ int SampleTopProcesses(ProcessSnapshotNative* buffer, int capacity, int* written
     {
         do
         {
-            HANDLE processHandle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ, FALSE, entry.th32ProcessID);
+            HANDLE processHandle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, entry.th32ProcessID);
             if (processHandle == nullptr)
             {
                 continue;
@@ -803,7 +561,7 @@ int SampleTopProcesses(ProcessSnapshotNative* buffer, int capacity, int* written
                     ? (totalTime - previous->second.LastTotalTime100Ns)
                     : 0;
 
-                const double maxTime = elapsedSeconds * 10000000.0 * static_cast<double>(g_state.SystemInfo.dwNumberOfProcessors);
+                const double maxTime = elapsedSeconds * 10000000.0 * static_cast<double>(g_state.ProcessorCount);
                 if (maxTime > 0.0)
                 {
                     cpuPercent = std::clamp((static_cast<double>(delta) / maxTime) * 100.0, 0.0, 100.0);

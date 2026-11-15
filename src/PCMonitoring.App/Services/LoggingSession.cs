@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.IO;
 using System.Text;
 using PCMonitoring.App.Models;
@@ -69,6 +69,15 @@ public sealed class LoggingSession
 
     public void AddSample(SystemSnapshot snapshot)
     {
+        // Called from the sampling thread while Discard runs on the UI thread.
+        lock (_processTotals)
+        {
+            AddSampleCore(snapshot);
+        }
+    }
+
+    private void AddSampleCore(SystemSnapshot snapshot)
+    {
         if (_discarded)
         {
             return;
@@ -104,9 +113,12 @@ public sealed class LoggingSession
 
     public void Discard()
     {
-        _discarded = true;
-        SampleCount = 0;
-        _processTotals.Clear();
+        lock (_processTotals)
+        {
+            _discarded = true;
+            SampleCount = 0;
+            _processTotals.Clear();
+        }
 
         if (Directory.Exists(SessionDirectory))
         {

@@ -592,10 +592,12 @@ public sealed class MainForm : Form
     {
         await foreach (var snapshot in _monitorRuntime.Snapshots.ReadAllAsync())
         {
-            if (_loggingSession is not null)
+            // Read once: the UI thread can null this field between checks (Stop Log).
+            var session = _loggingSession;
+            if (session is not null)
             {
-                _loggingSession.AddSample(snapshot);
-                if (DateTimeOffset.Now >= _loggingSession.EndTime)
+                session.AddSample(snapshot);
+                if (DateTimeOffset.Now >= session.EndTime)
                 {
                     await SaveLoggingSessionAsync();
                 }
@@ -610,6 +612,12 @@ public sealed class MainForm : Form
 
     private void ApplySnapshot(SystemSnapshot snapshot)
     {
+        // Nothing visible to repaint; the next snapshot after restore refreshes everything.
+        if (WindowState == FormWindowState.Minimized)
+        {
+            return;
+        }
+
         _cpuPrimary.Text = $"{snapshot.Cpu.UsagePercent:F1}%";
         _cpuSecondary.Text = snapshot.Cpu.CurrentClockSpeedMHz.HasValue
             ? $"Clock {FormatClockSpeed(snapshot.Cpu.CurrentClockSpeedMHz.Value)}"
