@@ -14,6 +14,8 @@
 #include <tlhelp32.h>
 #include <evntrace.h>
 #include <evntcons.h>
+#include <winternl.h>  // NTSTATUS for d3dkmthk.h
+#include <d3dkmthk.h>
 
 #include <algorithm>
 #include <cmath>
@@ -26,6 +28,7 @@
 #include <vector>
 
 #pragma comment(lib, "advapi32.lib")
+#pragma comment(lib, "gdi32.lib")
 #pragma comment(lib, "iphlpapi.lib")
 #pragma comment(lib, "pdh.lib")
 #pragma comment(lib, "psapi.lib")
@@ -66,6 +69,8 @@ namespace
         PDH_HCOUNTER GpuUtilizationCounter = nullptr;
         PDH_HCOUNTER GpuDedicatedMemoryCounter = nullptr;
         bool GpuCountersAvailable = false;
+        // Kernel graphics adapters for temperature (what Task Manager reads); opened once, closed on shutdown.
+        std::vector<D3DKMT_HANDLE> GpuAdapters;
         // Busiest engine per process from the last GPU sample (Task Manager's per-process GPU %).
         std::unordered_map<uint32_t, double> GpuByProcess;
 
@@ -514,10 +519,64 @@ namespace
         QueryDriveSpace(disk.TotalBytes, disk.FreeBytes);
     }
 
+    void OpenGpuAdapters()
+    {
+        D3DKMT_ENUMADAPTERS2 enumAdapters{};
+        if (D3DKMTEnumAdapters2(&enumAdapters) != 0 || enumAdapters.NumAdapters == 0)
+        {
+            return;
+        }
+
+        std::vector<D3DKMT_ADAPTERINFO> adapters(enumAdapters.NumAdapters);
+        enumAdapters.pAdapters = adapters.data();
+        if (D3DKMTEnumAdapters2(&enumAdapters) != 0)
+        {
+            return;
+        }
+
+        for (ULONG i = 0; i < enumAdapters.NumAdapters; ++i)
+        {
+            g_state.GpuAdapters.push_back(adapters[i].hAdapter);
+        }
+    }
+
+    void CloseGpuAdapters()
+    {
+        for (const D3DKMT_HANDLE adapter : g_state.GpuAdapters)
+        {
+            D3DKMT_CLOSEADAPTER close{};
+            close.hAdapter = adapter;
+            D3DKMTCloseAdapter(&close);
+        }
+
+        g_state.GpuAdapters.clear();
+    }
+
+    // Hottest adapter in deci-Celsius from the driver (WDDM 2.4+); adapters that don't report return 0.
+    double QueryGpuTemperature()
+    {
+        double hottest = 0.0;
+        for (const D3DKMT_HANDLE adapter : g_state.GpuAdapters)
+        {
+            D3DKMT_ADAPTER_PERFDATA perf{};
+            D3DKMT_QUERYADAPTERINFO query{};
+            query.hAdapter = adapter;
+            query.Type = KMTQAITYPE_ADAPTERPERFDATA;
+            query.pPrivateDriverData = &perf;
+            query.PrivateDriverDataSize = sizeof(perf);
+            if (D3DKMTQueryAdapterInfo(&query) == 0)
+            {
+                hottest = std::max(hottest, perf.Temperature / 10.0);
+            }
+        }
+
+        return hottest;
+    }
+
     void SampleGpu(GpuMetricsNative& gpu)
     {
-        gpu.TemperatureAvailable = 0;
-        gpu.TemperatureCelsius = 0.0;
+        gpu.TemperatureCelsius = QueryGpuTemperature();
+        gpu.TemperatureAvailable = gpu.TemperatureCelsius > 0.0 ? 1 : 0;
 
         if (!g_state.GpuCountersAvailable || g_state.GpuQuery == nullptr)
         {
@@ -600,6 +659,7 @@ int InitializeMonitor()
     }
 
     ProcessNetwork::Start();
+    OpenGpuAdapters();
     g_state.Initialized = true;
     return 1;
 }
@@ -608,6 +668,7 @@ void ShutdownMonitor()
 {
     std::scoped_lock lock(g_mutex);
     ProcessNetwork::Stop();
+    CloseGpuAdapters();
     ClosePdh();
     g_state.ProcessTimes.clear();
     g_state.Initialized = false;

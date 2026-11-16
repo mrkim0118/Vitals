@@ -36,6 +36,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <EmbeddedResource Include="Assets\AppIcon.ico" LogicalName="Vitals.AppIcon.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="LibreHardwareMonitorLib" Version="0.9.5-pre572" />
     <PackageReference Include="Velopack" Version="0.0.1298" />
   </ItemGroup>

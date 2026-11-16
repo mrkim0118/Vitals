@@ -8,12 +8,18 @@ public sealed class HardwareSensorService : IDisposable
     private static readonly TimeSpan RefreshInterval = TimeSpan.FromSeconds(3);
 
     private readonly object _sync = new();
-    private readonly UpdateVisitor _updateVisitor = new();
+    private UpdateVisitor? _updateVisitor;
     private Computer? _computer;
     private DateTimeOffset _lastRefreshUtc = DateTimeOffset.MinValue;
     private double? _cachedCpuTemperature;
     private double? _cachedCpuClockMHz;
-    private double? _cachedGpuTemperature;
+
+    // CPU sensors are reachable only through the PawnIO kernel driver, which admits administrators only.
+    public static bool IsPawnIoInstalled()
+    {
+        using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services\PawnIO");
+        return key is not null;
+    }
 
     public bool TryInitialize()
     {
@@ -24,12 +30,19 @@ public sealed class HardwareSensorService : IDisposable
                 return true;
             }
 
+            // LibreHardwareMonitor is about half of this app's memory, and without admin + PawnIO it reads nothing,
+            // so it only starts when it can deliver the CPU temperature. GPU temperature comes from the native collector.
+            if (!Environment.IsPrivilegedProcess || !IsPawnIoInstalled())
+            {
+                return false;
+            }
+
             try
             {
+                _updateVisitor = new UpdateVisitor();
                 _computer = new Computer
                 {
                     IsCpuEnabled = true,
-                    IsGpuEnabled = true,
                 };
                 _computer.Open();
                 RefreshSensors();
@@ -41,7 +54,6 @@ public sealed class HardwareSensorService : IDisposable
                 _computer = null;
                 _cachedCpuTemperature = null;
                 _cachedCpuClockMHz = null;
-                _cachedGpuTemperature = null;
                 return false;
             }
         }
@@ -64,7 +76,6 @@ public sealed class HardwareSensorService : IDisposable
 
             var cpuTemperature = _cachedCpuTemperature ?? snapshot.Cpu.TemperatureCelsius;
             var cpuClockMHz = SelectCpuClock(snapshot.Cpu.CurrentClockSpeedMHz, _cachedCpuClockMHz);
-            var gpuTemperature = _cachedGpuTemperature ?? snapshot.Gpu.TemperatureCelsius;
 
             return new SystemSnapshot
             {
@@ -77,12 +88,7 @@ public sealed class HardwareSensorService : IDisposable
                 },
                 Memory = snapshot.Memory,
                 Disk = snapshot.Disk,
-                Gpu = new GpuMetrics
-                {
-                    UsagePercent = snapshot.Gpu.UsagePercent,
-                    DedicatedMemoryBytes = snapshot.Gpu.DedicatedMemoryBytes,
-                    TemperatureCelsius = gpuTemperature,
-                },
+                Gpu = snapshot.Gpu,
                 Network = snapshot.Network,
                 TopProcesses = snapshot.TopProcesses,
             };
@@ -114,7 +120,7 @@ public sealed class HardwareSensorService : IDisposable
 
     private void RefreshSensors()
     {
-        if (_computer is null)
+        if (_computer is null || _updateVisitor is null)
         {
             return;
         }
@@ -124,14 +130,12 @@ public sealed class HardwareSensorService : IDisposable
             _computer.Accept(_updateVisitor);
             _cachedCpuTemperature = GetCpuTemperature(_computer.Hardware);
             _cachedCpuClockMHz = GetCpuClockMHz(_computer.Hardware);
-            _cachedGpuTemperature = GetGpuTemperature(_computer.Hardware);
             _lastRefreshUtc = DateTimeOffset.UtcNow;
         }
         catch
         {
             _cachedCpuTemperature = null;
             _cachedCpuClockMHz = null;
-            _cachedGpuTemperature = null;
             _lastRefreshUtc = DateTimeOffset.UtcNow;
         }
     }
@@ -158,33 +162,6 @@ public sealed class HardwareSensorService : IDisposable
                    "die",
                    "core average")
                ?? temperatures.Average(sensor => sensor.Value);
-    }
-
-    private static double? GetGpuTemperature(IEnumerable<IHardware> hardwareItems)
-    {
-        var temperatures = EnumerateHardware(hardwareItems)
-            .Where(hardware =>
-                hardware.HardwareType == HardwareType.GpuNvidia ||
-                hardware.HardwareType == HardwareType.GpuAmd ||
-                hardware.HardwareType == HardwareType.GpuIntel)
-            .SelectMany(hardware => hardware.Sensors)
-            .Where(sensor => sensor.SensorType == SensorType.Temperature && sensor.Value.HasValue)
-            .Select(sensor => new SensorReading(sensor.Name, sensor.Value!.Value))
-            .ToList();
-
-        if (temperatures.Count == 0)
-        {
-            return null;
-        }
-
-        return TryGetPreferredTemperature(
-                   temperatures,
-                   "gpu core",
-                   "core",
-                   "edge",
-                   "hot spot",
-                   "hotspot")
-               ?? temperatures.Max(sensor => sensor.Value);
     }
 
     private static double? GetCpuClockMHz(IEnumerable<IHardware> hardwareItems)

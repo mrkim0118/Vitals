@@ -51,7 +51,7 @@ public sealed class MainForm : Form
     private TimeSpan _lastSelfCpu;
     private TimeSpan _lastSelfWall;
     private readonly bool _isAdministrator = IsRunningAsAdministrator();
-    private readonly bool _pawnIoInstalled = IsPawnIoInstalled();
+    private readonly bool _pawnIoInstalled = HardwareSensorService.IsPawnIoInstalled();
 
     private readonly AppSettings _settings;
     private readonly string _appVersionText;
@@ -74,12 +74,17 @@ public sealed class MainForm : Form
         Size = new Size(980, 800);
         BackColor = Theme.Background;
         ForeColor = Color.White;
-        Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+        // From the embedded resource: extracting it from the exe pulls in shell32 and ~16 MB of shell DLLs.
+        using (var iconStream = typeof(MainForm).Assembly.GetManifestResourceStream("Vitals.AppIcon.ico"))
+        {
+            Icon = iconStream is null ? null : new Icon(iconStream);
+        }
 
         BuildLayout();
 
         Load += OnLoad;
-        Shown += OnShown;
+        // Auto-update is turned off for now (startup check). See CreateMenuButton for the menu item.
+        // Shown += OnShown;
         FormClosing += OnFormClosing;
     }
 
@@ -924,12 +929,6 @@ public sealed class MainForm : Form
         }
     }
 
-    private static bool IsPawnIoInstalled()
-    {
-        using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services\PawnIO");
-        return key is not null;
-    }
-
     private async Task RestartAsAdministratorAsync()
     {
         if (_loggingSession is not null)
@@ -984,7 +983,8 @@ public sealed class MainForm : Form
         };
 
         var menu = new ContextMenuStrip();
-        menu.Items.Add("Check for updates", null, async (_, _) => await CheckForUpdatesAsync(manual: true));
+        // Auto-update is turned off for now. Uncomment this line and `Shown += OnShown;` in the constructor to turn it back on.
+        // menu.Items.Add("Check for updates", null, async (_, _) => await CheckForUpdatesAsync(manual: true));
         if (!_isAdministrator)
         {
             menu.Items.Add("Restart as administrator (CPU temperature, per-process network)", null, async (_, _) => await RestartAsAdministratorAsync());
@@ -996,6 +996,7 @@ public sealed class MainForm : Form
         }
 
         button.Click += (_, _) => menu.Show(button, new Point(button.Width - menu.Width, button.Height));
+        button.Visible = menu.Items.Count > 0; // elevated with PawnIO installed leaves nothing to show
         return button;
     }
 
