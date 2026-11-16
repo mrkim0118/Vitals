@@ -1,3 +1,5 @@
+**English** | [한국어](README.ko.md)
+
 # Vitals
 
 A lightweight real-time PC monitor for Windows, by Manggdy.
@@ -61,6 +63,8 @@ When something is missing, the CPU card says which: `N/A (needs PawnIO driver)` 
 ## Keeping its own load low
 
 - The native collector uses PDH counters, IP Helper and process APIs, and no WMI.
+- GPU temperature comes straight from the graphics driver (D3DKMT), the same source as Task Manager.
+- LibreHardwareMonitor starts only for CPU temperature, and only when the app runs as administrator with PawnIO installed. It was about half of the app's memory.
 - Processes are sampled every 3 seconds; system metrics every second.
 - The window stops redrawing while minimized.
 - Each card is one owner-drawn control instead of a tree of WinForms controls.
@@ -113,6 +117,8 @@ Output:
 |---|---|
 | `artifacts\publish\<version>\win-x64` | Published app files |
 | `artifacts\velopack\Releases` | Installer, packages and `releases.win.json` |
+
+Auto-update is turned off in code for now: the startup check and the menu item are commented out in `MainForm.cs`. To turn it back on, uncomment those two lines.
 
 To ship an update, upload everything in `artifacts\velopack\Releases` to the update URL (default `https://tech.trendarchive.io/Utility/PC_Monitoring/`). Installed copies check for updates shortly after startup and from `⋯` → `Check for updates`, then ask before downloading and restarting.
 
