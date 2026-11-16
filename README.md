@@ -1,8 +1,14 @@
-**English** | [한국어](README.ko.md)
+<p align="center">
+  <img src="src/Vitals.App/Assets/AppIcon.png" width="128" alt="Vitals icon">
+</p>
 
-# Vitals
+<h1 align="center">Vitals</h1>
 
-A lightweight real-time PC monitor for Windows, by Manggdy.
+<p align="center">A lightweight real-time PC monitor for Windows.</p>
+
+<p align="center">Author: <b>Manggdy</b></p>
+
+<p align="center"><b>English</b> | <a href="README.ko.md">한국어</a></p>
 
 Vitals shows CPU, memory, disk, GPU and network activity with the same counters Task Manager uses. It is built to stay out of the way: a small C++ collector does the sampling, and the app shows its own CPU and memory use in the header so you can see what it costs.
 

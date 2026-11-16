@@ -1,8 +1,14 @@
-[English](README.md) | **한국어**
+<p align="center">
+  <img src="src/Vitals.App/Assets/AppIcon.png" width="128" alt="Vitals 아이콘">
+</p>
 
-# Vitals
+<h1 align="center">Vitals</h1>
 
-Manggdy가 만든 Windows용 가벼운 실시간 PC 모니터입니다.
+<p align="center">Windows용 가벼운 실시간 PC 모니터입니다.</p>
+
+<p align="center">제작자: <b>Manggdy</b></p>
+
+<p align="center"><a href="README.md">English</a> | <b>한국어</b></p>
 
 CPU, 메모리, 디스크, GPU, 네트워크 사용량을 작업 관리자와 같은 카운터로 보여줍니다. 측정 도구가 측정값을 오염시키지 않도록 수집은 작은 C++ 모듈이 맡고, 앱 상단에 이 앱 자체의 CPU·메모리 사용량을 표시합니다.
 
