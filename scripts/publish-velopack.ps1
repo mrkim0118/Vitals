@@ -12,6 +12,8 @@ param(
     [string]$PublishDir = "",
     [string]$OutputDir = "",
     [string]$ReleaseNotes = "",
+    # Code-signing certificate subject looked up in the current user's store; packs unsigned when it is missing.
+    [string]$SignSubject = "CN=Manggdy",
     [switch]$SkipPack
 )
 
@@ -145,6 +147,18 @@ if (-not $vpkCommand) {
     throw "The 'vpk' CLI tool is not installed. Install it first with: dotnet tool install -g vpk"
 }
 
+$signArgs = @()
+$signCert = Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert |
+    Where-Object { $_.Subject -eq $SignSubject -and $_.NotAfter -gt (Get-Date) } |
+    Sort-Object NotAfter | Select-Object -Last 1
+if ($signCert) {
+    Write-Host "Signing with $($signCert.Subject) ($($signCert.Thumbprint))"
+    $signArgs = @("--signParams", "/sha1 $($signCert.Thumbprint) /fd sha256 /td sha256 /tr http://timestamp.digicert.com")
+}
+else {
+    Write-Warning "No code-signing certificate '$SignSubject' found; the release will be unsigned."
+}
+
 Write-Host "Packing Velopack release into $outputDirPath"
 & $vpkCommand.Source pack `
     --packId $PackId `
@@ -158,7 +172,8 @@ Write-Host "Packing Velopack release into $outputDirPath"
     --framework net8.0-x64-desktop `
     --icon (Join-Path $repoRoot "src\Vitals.App\Assets\AppIcon.ico") `
     --releaseNotes $releaseNotesPath `
-    --outputDir $outputDirPath
+    --outputDir $outputDirPath `
+    @signArgs
 
 if ($LASTEXITCODE -ne 0) {
     throw "vpk pack failed."
