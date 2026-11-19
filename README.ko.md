@@ -117,24 +117,15 @@ powershell -ExecutionPolicy Bypass -File .\scripts\publish-velopack.ps1 -Version
 스크립트가 하는 일:
 
 - `.pdb` 없이 framework-dependent `win-x64` 빌드 생성
-- 앱 아이콘이 들어간 설치 프로그램과 업데이트 피드 생성
-- x64 .NET 8 Desktop Runtime이 없으면 설치 프로그램과 업데이트가 자동 설치하도록 설정
-- 업데이트 주소(`-DefaultUpdateSource`)를 `app-defaults.json`에 기록
+- 앱 아이콘이 들어간 설치 프로그램 생성
+- x64 .NET 8 Desktop Runtime이 없으면 설치 프로그램이 자동 설치하도록 설정
 
 | 출력 위치 | 내용 |
 |---|---|
 | `artifacts\publish\<버전>\win-x64` | 배포용 앱 파일 |
-| `artifacts\velopack\Releases` | 설치 프로그램, 패키지, `releases.win.json` |
+| `artifacts\velopack\Releases` | 설치 프로그램, 패키지 |
 
-### 자동 업데이트
-
-자동 업데이트는 현재 코드에서 꺼 두었습니다. `MainForm.cs`의 시작 시 확인과 메뉴 항목 두 줄이 주석 처리되어 있고, 주석을 풀면 다시 켜집니다.
-
-업데이트를 배포하려면 `artifacts\velopack\Releases`의 파일을 모두 업데이트 주소(기본값 `https://tech.trendarchive.io/Utility/PC_Monitoring/`)에 올리면 됩니다. 설치된 앱은 시작 직후와 `⋯` → `Check for updates`에서 새 버전을 확인하고, 사용자에게 물은 뒤 내려받아 재시작합니다.
-
-- 자동 업데이트는 Velopack 설치 프로그램으로 설치한 앱에서만 동작합니다. 빌드·publish 폴더에서는 동작하지 않습니다.
-- vpk 0.0.1298은 릴리스 노트에 `&`가 있으면 패키징에 실패합니다. 대신 "and"로 쓰세요.
-- 로컬에서 업데이트를 시험하려면 `-DefaultUpdateSource "<전체 경로>\artifacts\velopack\Releases"`로 빌드해서 설치한 뒤, 더 높은 버전을 빌드하면 됩니다.
+vpk 0.0.1298은 릴리스 노트에 `&`가 있으면 패키징에 실패합니다. 대신 "and"로 쓰세요.
 
 ## 프로젝트 구조
 
@@ -148,4 +139,4 @@ powershell -ExecutionPolicy Bypass -File .\scripts\publish-velopack.ps1 -Version
 ## 사용한 라이브러리
 
 - [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor) + [PawnIO](https://pawnio.eu/): CPU 온도
-- [Velopack](https://velopack.io/): 설치 프로그램과 업데이트
+- [Velopack](https://velopack.io/): 설치 프로그램

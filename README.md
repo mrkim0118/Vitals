@@ -117,24 +117,15 @@ powershell -ExecutionPolicy Bypass -File .\scripts\publish-velopack.ps1 -Version
 The script:
 
 - publishes a framework-dependent `win-x64` build without `.pdb` files
-- builds the installer with the app icon and the update feed
-- makes the installer and updater install the x64 .NET 8 Desktop Runtime when it is missing
-- stamps the update URL (`-DefaultUpdateSource`) into `app-defaults.json`
+- builds the installer with the app icon
+- makes the installer install the x64 .NET 8 Desktop Runtime when it is missing
 
 | Output | Contents |
 |---|---|
 | `artifacts\publish\<version>\win-x64` | Published app files |
-| `artifacts\velopack\Releases` | Installer, packages and `releases.win.json` |
+| `artifacts\velopack\Releases` | Installer and packages |
 
-### Auto-update
-
-Auto-update is turned off in code for now: the startup check and the menu item are commented out in `MainForm.cs`. To turn it back on, uncomment those two lines.
-
-To ship an update, upload everything in `artifacts\velopack\Releases` to the update URL (default `https://tech.trendarchive.io/Utility/PC_Monitoring/`). Installed copies check for updates shortly after startup and from `⋯` → `Check for updates`, then ask before downloading and restarting.
-
-- Auto-update only works in a copy installed from the Velopack installer, not in a build or publish folder.
-- vpk 0.0.1298 fails to pack when release notes contain `&`. Write "and" instead.
-- To test updates locally, build with `-DefaultUpdateSource "<full path>\artifacts\velopack\Releases"`, install it, then build a higher version.
+vpk 0.0.1298 fails to pack when release notes contain `&`. Write "and" instead.
 
 ## Project Layout
 
@@ -148,4 +139,4 @@ To ship an update, upload everything in `artifacts\velopack\Releases` to the upd
 ## Libraries
 
 - [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor) + [PawnIO](https://pawnio.eu/): CPU temperature
-- [Velopack](https://velopack.io/): installer and updates
+- [Velopack](https://velopack.io/): installer
