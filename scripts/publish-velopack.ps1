@@ -8,7 +8,6 @@ param(
     [string]$Configuration = "Release",
     [string]$MainExe = "Vitals.exe",
     [string]$Authors = "Manggdy",
-    [string]$DefaultUpdateSource = "https://tech.trendarchive.io/Utility/PC_Monitoring/",
     [string]$PublishDir = "",
     [string]$OutputDir = "",
     [string]$ReleaseNotes = "",
@@ -99,7 +98,6 @@ if ([string]::IsNullOrWhiteSpace($ReleaseNotes)) {
 
 $releaseNotesPath = Resolve-FullPath -BasePath $repoRoot -Value $ReleaseNotes
 $assemblyVersion = Convert-ToAssemblyVersion -SemanticVersion $Version
-$defaultsFilePath = Join-Path $publishDirPath "app-defaults.json"
 
 New-Item -ItemType Directory -Force -Path $publishDirPath | Out-Null
 New-Item -ItemType Directory -Force -Path $outputDirPath | Out-Null
@@ -132,10 +130,6 @@ if ($LASTEXITCODE -ne 0) {
 
 # Release packages must not contain managed or native debug symbols.
 Get-ChildItem -Path $publishDirPath -Filter "*.pdb" -File -Recurse | Remove-Item -Force
-
-@{
-    DefaultUpdateSource = $DefaultUpdateSource
-} | ConvertTo-Json | Set-Content -Path $defaultsFilePath -Encoding UTF8
 
 if ($SkipPack) {
     Write-Host "Publish completed. Skipping Velopack packaging because -SkipPack was specified."

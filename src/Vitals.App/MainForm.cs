@@ -7,7 +7,6 @@ using System.Threading.Tasks;
 using System.Windows.Forms;
 using Vitals.App.Models;
 using Vitals.App.Services;
-using Velopack;
 
 namespace Vitals.App;
 
@@ -57,9 +56,7 @@ public sealed class MainForm : Form
     private readonly string _appVersionText;
     private LoggingSession? _loggingSession;
     private Task? _readerTask;
-    private bool _isCheckingForUpdates;
     private bool _isClosing;
-    private bool _startupUpdateCheckPending = true;
 
     public MainForm()
     {
@@ -83,8 +80,6 @@ public sealed class MainForm : Form
         BuildLayout();
 
         Load += OnLoad;
-        // Auto-update is turned off for now (startup check). See CreateMenuButton for the menu item.
-        // Shown += OnShown;
         FormClosing += OnFormClosing;
     }
 
@@ -470,18 +465,6 @@ public sealed class MainForm : Form
         await Task.CompletedTask;
     }
 
-    private async void OnShown(object? sender, EventArgs e)
-    {
-        if (!_startupUpdateCheckPending)
-        {
-            return;
-        }
-
-        _startupUpdateCheckPending = false;
-        await Task.Delay(800);
-        await CheckForUpdatesAsync();
-    }
-
     private async Task ReadSnapshotsAsync()
     {
         await foreach (var snapshot in _monitorRuntime.Snapshots.ReadAllAsync())
@@ -726,7 +709,6 @@ public sealed class MainForm : Form
     private void OnFormClosing(object? sender, FormClosingEventArgs e)
     {
         _isClosing = true;
-        _startupUpdateCheckPending = false;
 
         CancelLoggingSession();
 
@@ -750,107 +732,6 @@ public sealed class MainForm : Form
         }
 
         SaveSettings();
-    }
-
-    private async Task CheckForUpdatesAsync(bool manual = false)
-    {
-        if (_isCheckingForUpdates || _isClosing)
-        {
-            return;
-        }
-
-        var updateSourceInput = AppRuntimeDefaults.GetDefaultUpdateSource();
-        if (string.IsNullOrWhiteSpace(updateSourceInput))
-        {
-            return;
-        }
-
-        if (!TryResolveUpdateSource(updateSourceInput, out var updateSource))
-        {
-            return;
-        }
-
-        _isCheckingForUpdates = true;
-        _statusLabel.Text = "Checking updates";
-
-        try
-        {
-            var manager = new UpdateManager(updateSource);
-            if (!manager.IsInstalled)
-            {
-                if (manual)
-                {
-                    MessageBox.Show(this, "Updates work only in the installed app.", "Check for updates");
-                }
-
-                return;
-            }
-
-            var update = await manager.CheckForUpdatesAsync();
-            if (update is null || _isClosing)
-            {
-                if (manual && update is null)
-                {
-                    MessageBox.Show(this, $"You have the latest version ({_appVersionText}).", "Check for updates");
-                }
-
-                return;
-            }
-
-            var versionText = update.TargetFullRelease.Version?.ToString() ?? _appVersionText;
-            var confirm = MessageBox.Show(
-                this,
-                $"An update is available.\nCurrent version: {_appVersionText}\nNew version: {versionText}\n\nWould you like to download and install it now?\nThe app will restart automatically after the update.",
-                "Update Available",
-                MessageBoxButtons.YesNo,
-                MessageBoxIcon.Question);
-
-            if (confirm != DialogResult.Yes || _isClosing)
-            {
-                return;
-            }
-
-            _statusLabel.Text = "Downloading update...";
-            using var progressDialog = new UpdateDownloadProgressDialog();
-            progressDialog.Show(this);
-            try
-            {
-                await manager.DownloadUpdatesAsync(update, progress =>
-                {
-                    if (!_isClosing && !IsDisposed && IsHandleCreated)
-                    {
-                        BeginInvoke(new Action(() =>
-                        {
-                            _statusLabel.Text = $"Downloading update... {progress}%";
-                            progressDialog.ReportProgress(progress);
-                        }));
-                    }
-                });
-            }
-            finally
-            {
-                progressDialog.CloseSafely();
-            }
-
-            if (_isClosing)
-            {
-                return;
-            }
-
-            _statusLabel.Text = "Applying update and restarting...";
-            manager.ApplyUpdatesAndRestart(update.TargetFullRelease);
-        }
-        catch
-        {
-        }
-        finally
-        {
-            _isCheckingForUpdates = false;
-            if (!_isClosing && !IsDisposed)
-            {
-                SetModeStatus();
-            }
-        }
     }
 
     private void SaveSettings()
@@ -983,8 +864,6 @@ public sealed class MainForm : Form
         };
 
         var menu = new ContextMenuStrip();
-        // Auto-update is turned off for now. Uncomment this line and `Shown += OnShown;` in the constructor to turn it back on.
-        // menu.Items.Add("Check for updates", null, async (_, _) => await CheckForUpdatesAsync(manual: true));
         if (!_isAdministrator)
         {
             menu.Items.Add("Restart as administrator (CPU temperature, per-process network)", null, async (_, _) => await RestartAsAdministratorAsync());
@@ -1016,37 +895,6 @@ public sealed class MainForm : Form
 
         duration = new TimeSpan(hours, minutes, seconds);
         return true;
-    }
-
-    private static bool TryResolveUpdateSource(string input, out string source)
-    {
-        source = input;
-
-        if (Uri.TryCreate(input, UriKind.Absolute, out var uri))
-        {
-            if (string.Equals(uri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
-            {
-                source = uri.AbsoluteUri;
-                return true;
-            }
-
-            if (string.Equals(uri.Scheme, Uri.UriSchemeFile, StringComparison.OrdinalIgnoreCase))
-            {
-                source = uri.LocalPath;
-                return true;
-            }
-        }
-
-        try
-        {
-            source = Path.GetFullPath(input);
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
     }
 
     private static string GetDisplayVersion()
