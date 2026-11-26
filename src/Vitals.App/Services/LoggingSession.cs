@@ -22,6 +22,14 @@ public sealed class LoggingSession
     private readonly MetricAccumulator _networkTxMb = new();
     private readonly Dictionary<ProcessKey, ProcessAccumulator> _processTotals = [];
     private bool _discarded;
+    private bool _saved;
+    // The process list is refreshed every 3 s but reused by the 1 s snapshots; count each list once.
+    private IReadOnlyList<ProcessMetrics>? _lastProcessList;
+    private StreamWriter? _csv;
+
+    private const string CsvHeader =
+        "time,cpu_percent,cpu_clock_mhz,cpu_temp_c,memory_percent,memory_used_gb,disk_active_percent," +
+        "disk_read_mb_s,disk_write_mb_s,gpu_percent,gpu_vram_mb,gpu_temp_c,net_down_mb_s,net_up_mb_s";
 
     public LoggingSession(TimeSpan duration, string rootDirectory)
     {
@@ -78,7 +86,8 @@ public sealed class LoggingSession
 
     private void AddSampleCore(SystemSnapshot snapshot)
     {
-        if (_discarded)
+        // The sampler may still hold this session for one more tick after Save; a late row must not reopen the CSV.
+        if (_discarded || _saved)
         {
             return;
         }
@@ -97,7 +106,14 @@ public sealed class LoggingSession
         AddIfHasValue(_gpuTemp, snapshot.Gpu.TemperatureCelsius);
         _networkRxMb.Add(snapshot.Network.ReceiveBytesPerSecond / 1024d / 1024d);
         _networkTxMb.Add(snapshot.Network.SendBytesPerSecond / 1024d / 1024d);
+        WriteCsvLine(snapshot);
 
+        if (ReferenceEquals(snapshot.TopProcesses, _lastProcessList))
+        {
+            return;
+        }
+
+        _lastProcessList = snapshot.TopProcesses;
         foreach (var process in snapshot.TopProcesses)
         {
             var key = new ProcessKey(process.ProcessId, process.Name);
@@ -111,6 +127,46 @@ public sealed class LoggingSession
         }
     }
 
+    // One row per sample, flushed as it goes so a crash keeps everything recorded so far.
+    private void WriteCsvLine(SystemSnapshot s)
+    {
+        try
+        {
+            if (_csv is null)
+            {
+                Directory.CreateDirectory(SessionDirectory);
+                _csv = new StreamWriter(Path.Combine(SessionDirectory, "samples.csv"), append: false, new UTF8Encoding(false)) { AutoFlush = true };
+                _csv.WriteLine(CsvHeader);
+            }
+
+            static string N(double? value, string format = "F1") =>
+                value.HasValue ? value.Value.ToString(format, CultureInfo.InvariantCulture) : "";
+
+            _csv.WriteLine(string.Join(',',
+                s.Timestamp.LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture),
+                N(s.Cpu.UsagePercent), N(s.Cpu.CurrentClockSpeedMHz, "F0"), N(s.Cpu.TemperatureCelsius),
+                N(s.Memory.UsagePercent), N(s.Memory.UsedBytes / 1024d / 1024d / 1024d, "F2"), N(s.Disk.UsagePercent),
+                N(s.Disk.ReadBytesPerSecond / 1024d / 1024d, "F3"), N(s.Disk.WriteBytesPerSecond / 1024d / 1024d, "F3"),
+                N(s.Gpu.UsagePercent), N(s.Gpu.DedicatedMemoryBytes / 1024d / 1024d, "F0"), N(s.Gpu.TemperatureCelsius),
+                N(s.Network.ReceiveBytesPerSecond / 1024d / 1024d, "F3"), N(s.Network.SendBytesPerSecond / 1024d / 1024d, "F3")));
+        }
+        catch (IOException)
+        {
+            // Folder gone or disk full: the summary still covers the session; stop writing rows.
+            CloseCsv();
+        }
+        catch (UnauthorizedAccessException)
+        {
+            CloseCsv();
+        }
+    }
+
+    private void CloseCsv()
+    {
+        _csv?.Dispose();
+        _csv = null;
+    }
+
     public void Discard()
     {
         lock (_processTotals)
@@ -118,6 +174,7 @@ public sealed class LoggingSession
             _discarded = true;
             SampleCount = 0;
             _processTotals.Clear();
+            CloseCsv();
         }
 
         if (Directory.Exists(SessionDirectory))
@@ -128,20 +185,21 @@ public sealed class LoggingSession
 
     public async Task SaveAsync(CancellationToken cancellationToken = default)
     {
-        if (_discarded || SampleCount == 0)
-        {
-            return;
-        }
-
-        Directory.CreateDirectory(RootDirectory);
-        Directory.CreateDirectory(SessionDirectory);
-
-        // Stop & Save runs on the UI thread while the sampler may still be adding to these totals.
         string summary;
+        // Stop & Save runs on the UI thread while the sampler may still be adding to these totals.
         lock (_processTotals)
         {
+            _saved = true;
+            CloseCsv();
+            if (_discarded || SampleCount == 0)
+            {
+                return;
+            }
+
             summary = BuildSummaryText();
         }
+
+        Directory.CreateDirectory(SessionDirectory);
 
         await File.WriteAllTextAsync(
             Path.Combine(SessionDirectory, "summary.txt"),

@@ -12,7 +12,6 @@ public sealed class HardwareSensorService : IDisposable
     private Computer? _computer;
     private DateTimeOffset _lastRefreshUtc = DateTimeOffset.MinValue;
     private double? _cachedCpuTemperature;
-    private double? _cachedCpuClockMHz;
 
     // CPU sensors are reachable only through the PawnIO kernel driver, which admits administrators only.
     public static bool IsPawnIoInstalled()
@@ -53,7 +52,6 @@ public sealed class HardwareSensorService : IDisposable
                 _computer?.Close();
                 _computer = null;
                 _cachedCpuTemperature = null;
-                _cachedCpuClockMHz = null;
                 return false;
             }
         }
@@ -75,7 +73,6 @@ public sealed class HardwareSensorService : IDisposable
             }
 
             var cpuTemperature = _cachedCpuTemperature ?? snapshot.Cpu.TemperatureCelsius;
-            var cpuClockMHz = SelectCpuClock(snapshot.Cpu.CurrentClockSpeedMHz, _cachedCpuClockMHz);
 
             return new SystemSnapshot
             {
@@ -84,13 +81,14 @@ public sealed class HardwareSensorService : IDisposable
                 {
                     UsagePercent = snapshot.Cpu.UsagePercent,
                     TemperatureCelsius = cpuTemperature,
-                    CurrentClockSpeedMHz = cpuClockMHz,
+                    CurrentClockSpeedMHz = snapshot.Cpu.CurrentClockSpeedMHz,
                 },
                 Memory = snapshot.Memory,
                 Disk = snapshot.Disk,
                 Gpu = snapshot.Gpu,
                 Network = snapshot.Network,
                 TopProcesses = snapshot.TopProcesses,
+                Drives = snapshot.Drives,
             };
         }
     }
@@ -129,13 +127,11 @@ public sealed class HardwareSensorService : IDisposable
         {
             _computer.Accept(_updateVisitor);
             _cachedCpuTemperature = GetCpuTemperature(_computer.Hardware);
-            _cachedCpuClockMHz = GetCpuClockMHz(_computer.Hardware);
             _lastRefreshUtc = DateTimeOffset.UtcNow;
         }
         catch
         {
             _cachedCpuTemperature = null;
-            _cachedCpuClockMHz = null;
             _lastRefreshUtc = DateTimeOffset.UtcNow;
         }
     }
@@ -162,49 +158,6 @@ public sealed class HardwareSensorService : IDisposable
                    "die",
                    "core average")
                ?? temperatures.Average(sensor => sensor.Value);
-    }
-
-    private static double? GetCpuClockMHz(IEnumerable<IHardware> hardwareItems)
-    {
-        var clocks = EnumerateHardware(hardwareItems)
-            .Where(hardware => hardware.HardwareType == HardwareType.Cpu)
-            .SelectMany(hardware => hardware.Sensors)
-            .Where(sensor => sensor.SensorType == SensorType.Clock && sensor.Value.HasValue)
-            .Select(sensor => new SensorReading(sensor.Name, sensor.Value!.Value))
-            .ToList();
-
-        if (clocks.Count == 0)
-        {
-            return null;
-        }
-
-        var coreClocks = clocks
-            .Where(sensor => sensor.Name.Contains("core", StringComparison.OrdinalIgnoreCase))
-            .ToList();
-
-        return TryGetPreferredReading(
-                   clocks,
-                   "core average",
-                   "average",
-                   "effective clock")
-               ?? (coreClocks.Count > 0
-                   ? coreClocks.Average(sensor => sensor.Value)
-                   : clocks.Average(sensor => sensor.Value));
-    }
-
-    private static double? SelectCpuClock(double? nativeClockMHz, double? sensorClockMHz)
-    {
-        if (nativeClockMHz.HasValue && nativeClockMHz.Value > 0.0)
-        {
-            return nativeClockMHz;
-        }
-
-        if (sensorClockMHz.HasValue && sensorClockMHz.Value > 0.0)
-        {
-            return sensorClockMHz;
-        }
-
-        return null;
     }
 
     private static double? TryGetPreferredTemperature(

@@ -49,12 +49,18 @@ public sealed class MainForm : Form
     private readonly Stopwatch _selfClock = Stopwatch.StartNew();
     private TimeSpan _lastSelfCpu;
     private TimeSpan _lastSelfWall;
-    private readonly bool _isAdministrator = IsRunningAsAdministrator();
+    private readonly bool _isAdministrator = Environment.IsPrivilegedProcess;
     private readonly bool _pawnIoInstalled = HardwareSensorService.IsPawnIoInstalled();
 
     private readonly AppSettings _settings;
     private readonly string _appVersionText;
     private LoggingSession? _loggingSession;
+    private TableLayoutPanel _root = null!;
+    private TableLayoutPanel _bottom = null!;
+    private readonly NotifyIcon _tray = new();
+    private readonly TrayWidget _widget = new();
+    private readonly AlertMonitor _alerts = new();
+    private List<ProcessMetrics> _shownProcesses = [];
     private Task? _readerTask;
     private bool _isClosing;
 
@@ -78,6 +84,10 @@ public sealed class MainForm : Form
         }
 
         BuildLayout();
+        CreateTray();
+        _widget.Click += (_, _) => RestoreFromTray();
+        TopMost = _settings.AlwaysOnTop;
+        Resize += (_, _) => OnResized();
 
         Load += OnLoad;
         Shown += (_, _) => CheckForUpdateOnStartup();
@@ -121,7 +131,7 @@ public sealed class MainForm : Form
     {
         SuspendLayout();
 
-        var root = new TableLayoutPanel
+        var root = _root = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
             BackColor = BackColor,
@@ -216,7 +226,7 @@ public sealed class MainForm : Form
         metrics.Controls.Add(_networkCard, 1, 1);
         metrics.Controls.Add(_logCard, 2, 1);
 
-        var bottom = new TableLayoutPanel
+        var bottom = _bottom = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
             BackColor = BackColor,
@@ -296,6 +306,7 @@ public sealed class MainForm : Form
         }
 
         _processList.SizeChanged += (_, _) => UpdateProcessColumnLayout();
+        _processList.ContextMenuStrip = CreateProcessMenu();
         processLayout.Controls.Add(_processList, 0, 1);
 
         for (var i = 0; i < ProcessRowCount; i++)
@@ -433,7 +444,7 @@ public sealed class MainForm : Form
 
         _cpuCard.SetContent("-", null, ("Clock", "-"), ("Temp", "-"));
         _memoryCard.SetContent("-", null, ("Used", "-"), ("Total", "-"));
-        _diskCard.SetContent("-", null, ("Read", "-"), ("Write", "-"), ("Free", "-"));
+        _diskCard.SetContent("-", null, ("Read", "-"), ("Write", "-"));
         _gpuCard.SetContent("-", null, ("VRAM", "-"), ("Temp", "-"));
         _networkCard.SetContent("-", null, ("Upload", "-"), ("Total down / up", "-"));
 
@@ -483,7 +494,23 @@ public sealed class MainForm : Form
     {
         base.OnHandleCreated(e);
         Theme.ApplyDarkTitleBar(this);
+        // Let a non-elevated second copy reach this window even when it runs as administrator (UIPI).
+        ChangeWindowMessageFilterEx(Handle, SingleInstance.ShowMessage, 1 /* MSGFLT_ALLOW */, IntPtr.Zero);
     }
+
+    protected override void WndProc(ref Message m)
+    {
+        if (m.Msg == SingleInstance.ShowMessage)
+        {
+            RestoreFromTray();
+            return;
+        }
+
+        base.WndProc(ref m);
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool ChangeWindowMessageFilterEx(IntPtr hwnd, int message, uint action, IntPtr changeInfo);
 
     private async void OnLoad(object? sender, EventArgs e)
     {
@@ -494,6 +521,8 @@ public sealed class MainForm : Form
         }
 
         _processNetworkAvailable = Native.NativeMethods.ProcessNetworkAvailable;
+        _monitorRuntime.Interval = TimeSpan.FromSeconds(Math.Clamp(_settings.UpdateIntervalSeconds, 1, 5));
+        ApplyCompactView();
         SetModeStatus();
         _readerTask = Task.Run(ReadSnapshotsAsync);
         await Task.CompletedTask;
@@ -523,8 +552,10 @@ public sealed class MainForm : Form
 
     private void ApplySnapshot(SystemSnapshot snapshot)
     {
+        UpdateTrayAndAlerts(snapshot);
+
         // Nothing visible to repaint; the next snapshot after restore refreshes everything.
-        if (WindowState == FormWindowState.Minimized)
+        if (WindowState == FormWindowState.Minimized || !Visible)
         {
             return;
         }
@@ -547,12 +578,14 @@ public sealed class MainForm : Form
 
         var disk = snapshot.Disk;
         _diskCard.Push(disk.UsagePercent);
-        _diskCard.SetContent(
-            $"{disk.UsagePercent:F1}%",
-            disk.UsagePercent,
+        // shortcut: the card fits three drive rows; a fourth drive and beyond are left out.
+        var diskRows = new List<(string, string)>
+        {
             ("Read", FormatRate(disk.ReadBytesPerSecond)),
             ("Write", FormatRate(disk.WriteBytesPerSecond)),
-            ("Free", $"{FormatBytes(disk.FreeBytes)} / {FormatBytes(disk.TotalBytes)}"));
+        };
+        diskRows.AddRange(snapshot.Drives.Take(3).Select(d => (d.Name, FormatDrive(d))));
+        _diskCard.SetContent($"{disk.UsagePercent:F1}%", disk.UsagePercent, diskRows.ToArray());
 
         var gpu = snapshot.Gpu;
         _gpuCard.Push(gpu.UsagePercent);
@@ -605,7 +638,7 @@ public sealed class MainForm : Form
             6 => _lastProcesses.OrderBy(p => p.NetworkBytesPerSecond).ThenBy(p => p.WorkingSetBytes),
             _ => _lastProcesses.OrderBy(p => p.CpuPercent).ThenBy(p => p.WorkingSetBytes),
         };
-        var rows = (_processSortDescending ? ordered.Reverse() : ordered).Take(ProcessRowCount).ToList();
+        var rows = _shownProcesses = (_processSortDescending ? ordered.Reverse() : ordered).Take(ProcessRowCount).ToList();
 
         for (var i = 0; i < ProcessRowCount; i++)
         {
@@ -744,7 +777,18 @@ public sealed class MainForm : Form
     {
         _isClosing = true;
 
-        CancelLoggingSession();
+        // Closing (also via the updater) keeps the log. Saved on the thread pool so the UI thread can block on it without deadlocking.
+        var session = Interlocked.Exchange(ref _loggingSession, null);
+        if (session is not null)
+        {
+            try
+            {
+                Task.Run(() => session.SaveAsync()).GetAwaiter().GetResult();
+            }
+            catch
+            {
+            }
+        }
 
         try
         {
@@ -766,6 +810,9 @@ public sealed class MainForm : Form
         }
 
         SaveSettings();
+        _tray.Visible = false;
+        _tray.Dispose();
+        _widget.Dispose();
     }
 
     private void SaveSettings()
@@ -865,6 +912,7 @@ public sealed class MainForm : Form
             Process.Start(new ProcessStartInfo
             {
                 FileName = Environment.ProcessPath ?? Application.ExecutablePath,
+                Arguments = Program.RestartingArgument,
                 UseShellExecute = true,
                 Verb = "runas",
             });
@@ -879,13 +927,6 @@ public sealed class MainForm : Form
         Close();
     }
 
-    private static bool IsRunningAsAdministrator()
-    {
-        using var identity = System.Security.Principal.WindowsIdentity.GetCurrent();
-        return new System.Security.Principal.WindowsPrincipal(identity)
-            .IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
-    }
-
     private Button CreateMenuButton()
     {
         var button = new ThemedButton
@@ -898,6 +939,33 @@ public sealed class MainForm : Form
         };
 
         var menu = new ContextMenuStrip();
+        menu.Items.Add(Toggle("Always on top", () => _settings.AlwaysOnTop, on => { _settings.AlwaysOnTop = on; TopMost = on; }));
+        menu.Items.Add(Toggle("Compact view (cards only)", () => _settings.CompactView, on => { _settings.CompactView = on; ApplyCompactView(); }));
+        menu.Items.Add(Toggle("Minimize to tray", () => _settings.MinimizeToTray, on => _settings.MinimizeToTray = on));
+        menu.Items.Add(Toggle("Show widget while in the tray", () => _settings.ShowTrayWidget, on => _settings.ShowTrayWidget = on));
+        menu.Items.Add(new ToolStripSeparator());
+
+        var interval = new ToolStripMenuItem("Update interval");
+        foreach (var seconds in new[] { 1, 2, 5 })
+        {
+            interval.DropDownItems.Add(Toggle($"{seconds} s", () => _settings.UpdateIntervalSeconds == seconds, _ =>
+            {
+                _settings.UpdateIntervalSeconds = seconds;
+                _monitorRuntime.Interval = TimeSpan.FromSeconds(seconds);
+            }));
+        }
+
+        menu.Items.Add(interval);
+        menu.Items.Add(Toggle(
+            $"Alerts (CPU ≥ {_settings.AlertCpuPercent:F0}%, RAM ≥ {_settings.AlertMemoryPercent:F0}%, CPU ≥ {_settings.AlertCpuTempCelsius:F0} °C, GPU ≥ {_settings.AlertGpuTempCelsius:F0} °C)",
+            () => _settings.AlertsEnabled,
+            on => _settings.AlertsEnabled = on));
+
+        if (!_isAdministrator || !_pawnIoInstalled)
+        {
+            menu.Items.Add(new ToolStripSeparator());
+        }
+
         if (!_isAdministrator)
         {
             menu.Items.Add("Restart as administrator (CPU temperature, per-process network)", null, async (_, _) => await RestartAsAdministratorAsync());
@@ -908,10 +976,217 @@ public sealed class MainForm : Form
             menu.Items.Add("Get the CPU temperature driver (PawnIO)...", null, (_, _) => ShowPawnIoHelp());
         }
 
+        // Check marks are read from the settings each time, so the tray menu and this one never disagree.
+        menu.Opening += (_, _) => RefreshChecks(menu.Items);
         button.Click += (_, _) => menu.Show(button, new Point(button.Width - menu.Width, button.Height));
-        button.Visible = menu.Items.Count > 0; // elevated with PawnIO installed leaves nothing to show
         return button;
     }
+
+    // A checkable item bound to a setting; every change is saved right away.
+    private ToolStripMenuItem Toggle(string text, Func<bool> isOn, Action<bool> set)
+    {
+        var item = new ToolStripMenuItem(text) { Tag = isOn };
+        item.Click += (_, _) =>
+        {
+            set(!isOn());
+            AppSettingsStore.Save(_settings);
+        };
+        return item;
+    }
+
+    private static void RefreshChecks(ToolStripItemCollection items)
+    {
+        foreach (var item in items.OfType<ToolStripMenuItem>())
+        {
+            if (item.Tag is Func<bool> isOn)
+            {
+                item.Checked = isOn();
+            }
+
+            RefreshChecks(item.DropDownItems);
+        }
+    }
+
+    private void CreateTray()
+    {
+        var menu = new ContextMenuStrip();
+        menu.Items.Add("Open Vitals", null, (_, _) => RestoreFromTray());
+        menu.Items.Add("Exit", null, (_, _) => Close());
+        _tray.Icon = Icon;
+        _tray.Text = "Vitals";
+        _tray.ContextMenuStrip = menu;
+        _tray.DoubleClick += (_, _) => RestoreFromTray();
+        _tray.Visible = true; // also carries the alert notifications
+    }
+
+    private void OnResized()
+    {
+        if (WindowState != FormWindowState.Minimized || !_settings.MinimizeToTray)
+        {
+            return;
+        }
+
+        Hide();
+        if (_settings.ShowTrayWidget)
+        {
+            _widget.ShowInCorner();
+        }
+    }
+
+    private void RestoreFromTray()
+    {
+        _widget.Hide();
+        if (!Visible)
+        {
+            Show();
+        }
+
+        if (WindowState == FormWindowState.Minimized)
+        {
+            WindowState = FormWindowState.Normal;
+        }
+
+        Activate();
+    }
+
+    private void UpdateTrayAndAlerts(SystemSnapshot snapshot)
+    {
+        // NotifyIcon.Text is limited to 127 characters.
+        _tray.Text = $"Vitals · CPU {snapshot.Cpu.UsagePercent:F0}% · GPU {snapshot.Gpu.UsagePercent:F0}% · RAM {snapshot.Memory.UsagePercent:F0}%";
+        _widget.Update(snapshot);
+
+        var alerts = _alerts.Evaluate(snapshot, _settings);
+        if (alerts.Count > 0)
+        {
+            _tray.ShowBalloonTip(10000, "Vitals alert", string.Join("\n", alerts), ToolTipIcon.Warning);
+        }
+    }
+
+    private void ApplyCompactView()
+    {
+        var compact = _settings.CompactView;
+        _bottom.Visible = !compact;
+        _root.RowStyles[2] = compact ? new RowStyle(SizeType.Absolute, 0) : new RowStyle(SizeType.Percent, 100F);
+
+        // Sizes set after startup are in physical pixels, so scale the design sizes by the DPI.
+        var s = DeviceDpi / 96f;
+        MinimumSize = compact ? new Size((int)(880 * s), (int)(470 * s)) : new Size((int)(880 * s), (int)(740 * s));
+        if (WindowState == FormWindowState.Normal)
+        {
+            Height = compact ? MinimumSize.Height : Math.Max(Height, (int)(800 * s));
+        }
+    }
+
+    private ContextMenuStrip CreateProcessMenu()
+    {
+        var menu = new ContextMenuStrip();
+        var open = menu.Items.Add("Open file location", null, (_, _) => OpenProcessLocation());
+        var end = menu.Items.Add("End process...", null, (_, _) => EndSelectedProcess());
+
+        // Right-click selects the row under the cursor first, and the menu only opens on a real row.
+        _processList.MouseDown += (_, e) =>
+        {
+            if (e.Button == MouseButtons.Right && _processList.GetItemAt(e.X, e.Y) is { } item)
+            {
+                item.Selected = true;
+            }
+        };
+        menu.Opening += (_, e) => e.Cancel = SelectedProcess() is null;
+        return menu;
+    }
+
+    private ProcessMetrics? SelectedProcess()
+    {
+        var index = _processList.SelectedIndices.Count > 0 ? _processList.SelectedIndices[0] : -1;
+        return index >= 0 && index < _shownProcesses.Count ? _shownProcesses[index] : null;
+    }
+
+    private void OpenProcessLocation()
+    {
+        if (SelectedProcess() is not { } process)
+        {
+            return;
+        }
+
+        var path = ProcessImagePath(process.ProcessId);
+        if (path is null)
+        {
+            MessageBox.Show(this, $"Can't read the location of {process.Name}. It may belong to the system or another user.", "Open file location", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{path}\"") { UseShellExecute = true });
+    }
+
+    private void EndSelectedProcess()
+    {
+        if (SelectedProcess() is not { } process)
+        {
+            return;
+        }
+
+        var answer = MessageBox.Show(
+            this,
+            $"End {process.Name} (PID {process.ProcessId})?\nUnsaved work in that program will be lost.",
+            "End process",
+            MessageBoxButtons.OKCancel,
+            MessageBoxIcon.Warning,
+            MessageBoxDefaultButton.Button2);
+        if (answer != DialogResult.OK)
+        {
+            return;
+        }
+
+        try
+        {
+            using var target = Process.GetProcessById((int)process.ProcessId);
+            target.Kill();
+        }
+        catch (ArgumentException)
+        {
+            // Already gone.
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            MessageBox.Show(
+                this,
+                $"Couldn't end {process.Name}: {ex.Message}" + (_isAdministrator ? "" : "\nRestarting Vitals as administrator may help."),
+                "End process",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+        }
+    }
+
+    // Process.MainModule needs more access than limited-information handles allow, so it fails for many processes.
+    private static string? ProcessImagePath(uint processId)
+    {
+        const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+        var handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, processId);
+        if (handle == IntPtr.Zero)
+        {
+            return null;
+        }
+
+        try
+        {
+            var buffer = new System.Text.StringBuilder(1024);
+            var size = buffer.Capacity;
+            return QueryFullProcessImageName(handle, 0, buffer, ref size) ? buffer.ToString(0, size) : null;
+        }
+        finally
+        {
+            CloseHandle(handle);
+        }
+    }
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr OpenProcess(uint access, bool inheritHandle, uint processId);
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
+    private static extern bool QueryFullProcessImageName(IntPtr process, uint flags, System.Text.StringBuilder name, ref int size);
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+    private static extern bool CloseHandle(IntPtr handle);
 
     // h:mm:ss with any hour count, so sessions longer than 24h are allowed.
     private bool TryGetConfiguredDuration(out TimeSpan duration)
@@ -966,6 +1241,9 @@ public sealed class MainForm : Form
     }
 
     private static string FormatRate(double bytesPerSecond) => $"{FormatBytes(bytesPerSecond)}/s";
+
+    private static string FormatDrive(DriveMetrics drive) =>
+        (drive.ActivePercent.HasValue ? $"{drive.ActivePercent.Value:F0}% · " : "") + $"{FormatBytes(drive.FreeBytes)} free";
 
     private Label CreateProcessHeaderLabel(string text, ContentAlignment alignment)
     {

@@ -53,9 +53,7 @@ public static class AppSettingsStore
 
     private static void MigrateDefaults(AppSettings settings)
     {
-        var oldDefault = Path.Combine(AppContext.BaseDirectory, "logs");
-        if (string.IsNullOrWhiteSpace(settings.LogRootPath) ||
-            string.Equals(settings.LogRootPath, oldDefault, StringComparison.OrdinalIgnoreCase))
+        if (string.IsNullOrWhiteSpace(settings.LogRootPath))
         {
             settings.LogRootPath = Path.Combine(SettingsDirectory, "logs");
         }

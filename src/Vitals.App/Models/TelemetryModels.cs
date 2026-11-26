@@ -38,6 +38,9 @@ public sealed class NetworkMetrics
     public ulong TotalSentBytes { get; init; }
 }
 
+// One fixed drive. ActivePercent is null until the counter has a value.
+public sealed record DriveMetrics(string Name, double? ActivePercent, ulong FreeBytes, ulong TotalBytes);
+
 public sealed class ProcessMetrics
 {
     public uint ProcessId { get; init; }
@@ -58,4 +61,5 @@ public sealed class SystemSnapshot
     public required GpuMetrics Gpu { get; init; }
     public required NetworkMetrics Network { get; init; }
     public required IReadOnlyList<ProcessMetrics> TopProcesses { get; init; }
+    public IReadOnlyList<DriveMetrics> Drives { get; init; } = [];
 }

@@ -58,6 +58,14 @@ struct SystemSnapshotNative
     int64_t TimestampUtcMilliseconds;
 };
 
+struct DriveMetricsNative
+{
+    wchar_t Name[4];          // "C:"
+    double ActivePercent;     // -1 when the counter has no value yet
+    uint64_t FreeBytes;
+    uint64_t TotalBytes;
+};
+
 struct ProcessSnapshotNative
 {
     uint32_t ProcessId;
@@ -74,3 +82,4 @@ VITALS_API void ShutdownMonitor();
 VITALS_API int SampleSystemSnapshot(SystemSnapshotNative* snapshot);
 VITALS_API int SampleTopProcesses(ProcessSnapshotNative* buffer, int capacity, int* written);
 VITALS_API int IsProcessNetworkAvailable();
+VITALS_API int SampleDrives(DriveMetricsNative* buffer, int capacity, int* written);

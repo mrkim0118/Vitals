@@ -16,10 +16,18 @@ public sealed class MonitorRuntime : IAsyncDisposable
             FullMode = BoundedChannelFullMode.DropOldest,
         });
 
+    private readonly PeriodicTimer _timer = new(TimeSpan.FromSeconds(1));
     private Task? _samplingTask;
     private bool _disposed;
 
     public ChannelReader<SystemSnapshot> Snapshots => _channel.Reader;
+
+    // Takes effect from the next tick; a longer interval means proportionally less work for this app.
+    public TimeSpan Interval
+    {
+        get => _timer.Period;
+        set => _timer.Period = value;
+    }
 
     public bool Initialize()
     {
@@ -39,11 +47,10 @@ public sealed class MonitorRuntime : IAsyncDisposable
     {
         try
         {
-            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
             var topProcesses = Array.Empty<ProcessMetrics>();
             var lastProcessRefresh = DateTimeOffset.MinValue;
 
-            while (await timer.WaitForNextTickAsync(cancellationToken))
+            while (await _timer.WaitForNextTickAsync(cancellationToken))
             {
                 if (DateTimeOffset.UtcNow - lastProcessRefresh >= TimeSpan.FromSeconds(3))
                 {
@@ -87,6 +94,7 @@ public sealed class MonitorRuntime : IAsyncDisposable
 
         NativeMethods.Shutdown();
         _hardwareSensorService.Dispose();
+        _timer.Dispose();
         _cts.Dispose();
     }
 }

@@ -64,6 +64,7 @@ namespace
         PDH_HCOUNTER DiskIdleCounter = nullptr;
         PDH_HCOUNTER DiskReadCounter = nullptr;
         PDH_HCOUNTER DiskWriteCounter = nullptr;
+        PDH_HCOUNTER VolumeIdleCounter = nullptr; // per-drive % Idle Time, collected together with DiskQuery
 
         PDH_HQUERY GpuQuery = nullptr;
         PDH_HCOUNTER GpuUtilizationCounter = nullptr;
@@ -71,6 +72,7 @@ namespace
         bool GpuCountersAvailable = false;
         // Kernel graphics adapters for temperature (what Task Manager reads); opened once, closed on shutdown.
         std::vector<D3DKMT_HANDLE> GpuAdapters;
+        uint64_t GpuAdaptersReopenTick = 0;
         // Busiest engine per process from the last GPU sample (Task Manager's per-process GPU %).
         std::unordered_map<uint32_t, double> GpuByProcess;
 
@@ -556,6 +558,7 @@ namespace
     double QueryGpuTemperature()
     {
         double hottest = 0.0;
+        bool anyAnswered = false;
         for (const D3DKMT_HANDLE adapter : g_state.GpuAdapters)
         {
             D3DKMT_ADAPTER_PERFDATA perf{};
@@ -566,8 +569,19 @@ namespace
             query.PrivateDriverDataSize = sizeof(perf);
             if (D3DKMTQueryAdapterInfo(&query) == 0)
             {
+                anyAnswered = true;
                 hottest = std::max(hottest, perf.Temperature / 10.0);
             }
+        }
+
+        // A driver update or GPU reset invalidates the handles; reopen, but at most once a minute
+        // so PCs whose drivers never report temperature don't re-enumerate every second.
+        const uint64_t now = GetTickCount64();
+        if (!anyAnswered && now - g_state.GpuAdaptersReopenTick >= 60000)
+        {
+            g_state.GpuAdaptersReopenTick = now;
+            CloseGpuAdapters();
+            OpenGpuAdapters();
         }
 
         return hottest;
@@ -598,6 +612,11 @@ namespace
                 {L"\\PhysicalDisk(_Total)\\Disk Read Bytes/sec", &g_state.DiskReadCounter},
                 {L"\\PhysicalDisk(_Total)\\Disk Write Bytes/sec", &g_state.DiskWriteCounter},
             });
+        if (diskReady)
+        {
+            // Optional: without it each drive shows only its free space.
+            AddEnglishCounter(g_state.DiskQuery, L"\\LogicalDisk(*)\\% Idle Time", &g_state.VolumeIdleCounter);
+        }
 
         const bool gpuReady = OpenCounterQuery(
             &g_state.GpuQuery,
@@ -841,4 +860,71 @@ int IsProcessNetworkAvailable()
 {
     std::scoped_lock lock(g_mutex);
     return ProcessNetwork::Running ? 1 : 0;
+}
+
+// Fixed drives with their active time (from the disk query that SampleSystemSnapshot collects) and free space.
+int SampleDrives(DriveMetricsNative* buffer, int capacity, int* written)
+{
+    if (buffer == nullptr || capacity <= 0 || written == nullptr)
+    {
+        return 0;
+    }
+
+    std::scoped_lock lock(g_mutex);
+    *written = 0;
+    if (!g_state.Initialized)
+    {
+        return 0;
+    }
+
+    std::unordered_map<std::wstring, double> idleByVolume;
+    if (g_state.VolumeIdleCounter != nullptr)
+    {
+        DWORD bufferSize = 0;
+        DWORD itemCount = 0;
+        if (PdhGetFormattedCounterArrayW(g_state.VolumeIdleCounter, PDH_FMT_DOUBLE, &bufferSize, &itemCount, nullptr) == PDH_MORE_DATA)
+        {
+            std::vector<BYTE> data(bufferSize);
+            auto* items = reinterpret_cast<PDH_FMT_COUNTERVALUE_ITEM_W*>(data.data());
+            if (PdhGetFormattedCounterArrayW(g_state.VolumeIdleCounter, PDH_FMT_DOUBLE, &bufferSize, &itemCount, items) == ERROR_SUCCESS)
+            {
+                for (DWORD i = 0; i < itemCount; ++i)
+                {
+                    if (items[i].FmtValue.CStatus == ERROR_SUCCESS && items[i].szName != nullptr)
+                    {
+                        idleByVolume[items[i].szName] = items[i].FmtValue.doubleValue;
+                    }
+                }
+            }
+        }
+    }
+
+    wchar_t drives[256]{};
+    const DWORD length = GetLogicalDriveStringsW(static_cast<DWORD>(std::size(drives) - 1), drives);
+    if (length == 0 || length >= std::size(drives))
+    {
+        return 1;
+    }
+
+    for (const wchar_t* root = drives; *root != L'\0' && *written < capacity; root += wcslen(root) + 1)
+    {
+        ULARGE_INTEGER freeAvailable{};
+        ULARGE_INTEGER total{};
+        ULARGE_INTEGER free{};
+        if (GetDriveTypeW(root) != DRIVE_FIXED || !GetDiskFreeSpaceExW(root, &freeAvailable, &total, &free))
+        {
+            continue;
+        }
+
+        DriveMetricsNative& drive = buffer[(*written)++];
+        drive = DriveMetricsNative{};
+        drive.Name[0] = root[0];
+        drive.Name[1] = L':';
+        const auto idle = idleByVolume.find(drive.Name);
+        drive.ActivePercent = idle == idleByVolume.end() ? -1.0 : std::clamp(100.0 - idle->second, 0.0, 100.0);
+        drive.FreeBytes = free.QuadPart;
+        drive.TotalBytes = total.QuadPart;
+    }
+
+    return 1;
 }

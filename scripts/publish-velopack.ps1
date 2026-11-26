@@ -11,8 +11,9 @@ param(
     [string]$PublishDir = "",
     [string]$OutputDir = "",
     [string]$ReleaseNotes = "",
-    # Code-signing certificate subject looked up in the current user's store; packs unsigned when it is missing.
-    [string]$SignSubject = "CN=Manggdy",
+    # The CN=Manggdy code-signing certificate, pinned by thumbprint: the in-app updater only runs setups
+    # signed by the same certificate as the running app, so every release must use this one.
+    [string]$SignThumbprint = "58DE52FE1384185D65535947555DEC11C76FC995",
     [switch]$SkipPack
 )
 
@@ -143,14 +144,15 @@ if (-not $vpkCommand) {
 
 $signArgs = @()
 $signCert = Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert |
-    Where-Object { $_.Subject -eq $SignSubject -and $_.NotAfter -gt (Get-Date) } |
-    Sort-Object NotAfter | Select-Object -Last 1
+    Where-Object { $_.Thumbprint -eq $SignThumbprint -and $_.NotAfter -gt (Get-Date) } |
+    Select-Object -First 1
 if ($signCert) {
     Write-Host "Signing with $($signCert.Subject) ($($signCert.Thumbprint))"
     $signArgs = @("--signParams", "/sha1 $($signCert.Thumbprint) /fd sha256 /td sha256 /tr http://timestamp.digicert.com")
 }
 else {
-    Write-Warning "No code-signing certificate '$SignSubject' found; the release will be unsigned."
+    # An unsigned release can't be installed through the in-app updater, so don't ship one by accident.
+    throw "Code-signing certificate $SignThumbprint was not found in Cert:\CurrentUser\My (or it has expired)."
 }
 
 Write-Host "Packing Velopack release into $outputDirPath"

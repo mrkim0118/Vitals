@@ -91,6 +91,40 @@ internal static class NativeMethods
     [DllImport("Vitals.Native.dll", CallingConvention = CallingConvention.Cdecl)]
     private static extern int IsProcessNetworkAvailable();
 
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct DriveMetricsNative
+    {
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 4)]
+        public string Name;
+
+        public double ActivePercent;
+        public ulong FreeBytes;
+        public ulong TotalBytes;
+    }
+
+    [DllImport("Vitals.Native.dll", CallingConvention = CallingConvention.Cdecl)]
+    private static extern int SampleDrives([Out] DriveMetricsNative[] buffer, int capacity, out int written);
+
+    // shortcut: 26 slots covers every drive letter; mounted folders without a letter are not listed.
+    private static readonly DriveMetricsNative[] DriveBuffer = new DriveMetricsNative[26];
+
+    private static IReadOnlyList<DriveMetrics> TrySampleDrives()
+    {
+        if (SampleDrives(DriveBuffer, DriveBuffer.Length, out var written) != 1 || written <= 0)
+        {
+            return [];
+        }
+
+        var drives = new DriveMetrics[written];
+        for (var i = 0; i < written; i++)
+        {
+            var d = DriveBuffer[i];
+            drives[i] = new DriveMetrics(d.Name, d.ActivePercent >= 0 ? d.ActivePercent : null, d.FreeBytes, d.TotalBytes);
+        }
+
+        return drives;
+    }
+
     public static bool Initialize() => InitializeMonitor() == 1;
 
     // True only when the ETW network session started, which needs admin rights.
@@ -142,6 +176,7 @@ internal static class NativeMethods
                 TotalSentBytes = snapshot.Network.TotalSentBytes,
             },
             TopProcesses = topProcesses,
+            Drives = TrySampleDrives(),
         };
     }
 
