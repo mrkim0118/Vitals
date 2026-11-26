@@ -80,7 +80,41 @@ public sealed class MainForm : Form
         BuildLayout();
 
         Load += OnLoad;
+        Shown += (_, _) => CheckForUpdateOnStartup();
         FormClosing += OnFormClosing;
+    }
+
+    // Asks once per launch when GitHub has a newer release, then runs its setup and closes.
+    private async void CheckForUpdateOnStartup()
+    {
+        var release = await GitHubUpdater.FindNewerReleaseAsync();
+        if (release is null || IsDisposed)
+        {
+            return;
+        }
+
+        var message = $"Version v{release.Version} is available.\nCurrent version: {GitHubUpdater.CurrentVersion}\n\nDownload and install it now?";
+        if (MessageBox.Show(this, message, "Update Available", MessageBoxButtons.YesNo, MessageBoxIcon.Information) != DialogResult.Yes)
+        {
+            return;
+        }
+
+        var originalTitle = Text;
+        UseWaitCursor = true;
+        try
+        {
+            await GitHubUpdater.DownloadAndStartSetupAsync(release, new Progress<int>(percent => Text = $"Downloading update... {percent}%"));
+            Close();
+        }
+        catch (Exception ex)
+        {
+            Text = originalTitle;
+            MessageBox.Show(this, $"Failed to download the update.\n{ex.Message}", "Update Available", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        finally
+        {
+            UseWaitCursor = false;
+        }
     }
 
     private void BuildLayout()

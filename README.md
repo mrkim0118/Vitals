@@ -19,6 +19,7 @@ Vitals shows CPU, memory, disk, GPU and network activity with the same counters 
 - **Logging**: Record for a set time and get a `summary.txt` with min, max and average for each metric.
 - **Administrator mode**: Unlocks CPU temperature and per-process network usage.
 - **Low overhead**: A native collector and owner-drawn cards keep the app's own load small.
+- **Update check**: On launch, checks the latest GitHub release and asks whether to download and install the new version.
 
 ### Live cards
 
@@ -135,6 +136,7 @@ vpk 0.0.1298 fails to pack when release notes contain `&`. Write "and" instead.
 | `src\Vitals.Native` | C++ collector DLL (`Vitals.Native.dll`) |
 | `scripts\publish-velopack.ps1` | Builds a release and installer |
 | `scripts\build-native.ps1` | Builds the native DLL (called by the app build) |
+| `src\Vitals.App\GitHubUpdater.cs` | GitHub release update check |
 
 ## Libraries
 
