@@ -2,7 +2,6 @@ using System;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows.Forms;
-using Velopack;
 
 namespace Vitals.App;
 
@@ -14,8 +13,6 @@ internal static class Program
     [STAThread]
     private static void Main(string[] args)
     {
-        VelopackApp.Build().Run();
-
         using var instance = SingleInstance.TryAcquire(waitForPrevious: Array.IndexOf(args, RestartingArgument) >= 0);
         if (instance is null)
         {
