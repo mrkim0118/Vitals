@@ -63,6 +63,7 @@ public sealed class MainForm : Form
     private List<ProcessMetrics> _shownProcesses = [];
     private Task? _readerTask;
     private bool _isClosing;
+    private bool _exitRequested;
 
     public MainForm()
     {
@@ -114,7 +115,7 @@ public sealed class MainForm : Form
         try
         {
             await GitHubUpdater.DownloadAndStartSetupAsync(release, new Progress<int>(percent => Text = $"Downloading update... {percent}%"));
-            Close();
+            ExitApp();
         }
         catch (Exception ex)
         {
@@ -775,6 +776,14 @@ public sealed class MainForm : Form
 
     private void OnFormClosing(object? sender, FormClosingEventArgs e)
     {
+        // The X button sends the window to the tray; Windows shutdown and ExitApp still close it.
+        if (!_exitRequested && e.CloseReason == CloseReason.UserClosing && _settings.MinimizeToTray)
+        {
+            e.Cancel = true;
+            SendToTray();
+            return;
+        }
+
         _isClosing = true;
 
         // Closing (also via the updater) keeps the log. Saved on the thread pool so the UI thread can block on it without deadlocking.
@@ -924,7 +933,7 @@ public sealed class MainForm : Form
         }
 
         await SaveLoggingSessionAsync();
-        Close();
+        ExitApp();
     }
 
     private Button CreateMenuButton()
@@ -941,7 +950,7 @@ public sealed class MainForm : Form
         var menu = new ContextMenuStrip();
         menu.Items.Add(Toggle("Always on top", () => _settings.AlwaysOnTop, on => { _settings.AlwaysOnTop = on; TopMost = on; }));
         menu.Items.Add(Toggle("Compact view (cards only)", () => _settings.CompactView, on => { _settings.CompactView = on; ApplyCompactView(); }));
-        menu.Items.Add(Toggle("Minimize to tray", () => _settings.MinimizeToTray, on => _settings.MinimizeToTray = on));
+        menu.Items.Add(Toggle("Minimize or close to tray", () => _settings.MinimizeToTray, on => _settings.MinimizeToTray = on));
         menu.Items.Add(Toggle("Show widget while in the tray", () => _settings.ShowTrayWidget, on => _settings.ShowTrayWidget = on));
         menu.Items.Add(new ToolStripSeparator());
 
@@ -1011,7 +1020,7 @@ public sealed class MainForm : Form
     {
         var menu = new ContextMenuStrip();
         menu.Items.Add("Open Vitals", null, (_, _) => RestoreFromTray());
-        menu.Items.Add("Exit", null, (_, _) => Close());
+        menu.Items.Add("Exit", null, (_, _) => ExitApp());
         _tray.Icon = Icon;
         _tray.Text = "Vitals";
         _tray.ContextMenuStrip = menu;
@@ -1021,16 +1030,26 @@ public sealed class MainForm : Form
 
     private void OnResized()
     {
-        if (WindowState != FormWindowState.Minimized || !_settings.MinimizeToTray)
+        if (WindowState == FormWindowState.Minimized && _settings.MinimizeToTray)
         {
-            return;
+            SendToTray();
         }
+    }
 
+    private void SendToTray()
+    {
         Hide();
         if (_settings.ShowTrayWidget)
         {
             _widget.ShowInCorner();
         }
+    }
+
+    // The only way out while "Minimize or close to tray" is on (tray menu Exit, updater, restart as admin).
+    private void ExitApp()
+    {
+        _exitRequested = true;
+        Close();
     }
 
     private void RestoreFromTray()

@@ -23,7 +23,7 @@ Get the latest installer from the [Releases](../../releases/latest) page:
 - **Live cards**: Each card shows the current value, a usage bar and a trend graph of the last 60 samples. The value and bar turn orange above 60% and red above 85%.
 - **Per-drive disk**: The Disk card lists each drive's active time and free space.
 - **Top Processes**: The top 10 processes, sortable by PID, name, CPU, GPU, memory, disk or network. Right-click a row to open its file location or end it.
-- **Tray mode**: Minimizing hides the window to the tray and shows a small widget above the taskbar with CPU, GPU, RAM and drive C:.
+- **Tray mode**: Minimizing or closing hides the window to the tray and shows a small widget above the taskbar with CPU, GPU, RAM and drive C:.
 - **Alerts**: A Windows notification when CPU or memory usage, or CPU or GPU temperature, stays above its limit.
 - **Logging**: Record for a set time and get a `summary.txt` with min, max and average for each metric, plus `samples.csv` with one row per sample.
 - **Window options**: Always on top, a compact cards-only view, and an update interval of 1, 2 or 5 seconds.
@@ -61,14 +61,14 @@ Get the latest installer from the [Releases](../../releases/latest) page:
 
 ## Usage
 
-The `⋯` button in the header holds the options: Always on top, Compact view, Minimize to tray, Show widget while in the tray, Update interval and Alerts. Each choice is saved right away.
+The `⋯` button in the header holds the options: Always on top, Compact view, Minimize or close to tray, Show widget while in the tray, Update interval and Alerts. Each choice is saved right away.
 
 ### Tray mode
 
-- Minimize the window to send it to the tray. A widget appears above the taskbar's corner with CPU, GPU, RAM and drive C: (how full it is, and the free space).
+- Minimize or close (X) the window to send it to the tray. A widget appears above the taskbar's corner with CPU, GPU, RAM and drive C: (how full it is, and the free space).
 - Click the widget, double-click the tray icon, or start Vitals again to bring the window back.
-- Right-click the tray icon for `Open Vitals` and `Exit`.
-- Turn off `Minimize to tray` to minimize to the taskbar as usual, or `Show widget while in the tray` to hide the widget.
+- Right-click the tray icon for `Open Vitals` and `Exit`. `Exit` is how you quit while tray mode is on.
+- Turn off `Minimize or close to tray` to minimize to the taskbar and quit with X as usual, or `Show widget while in the tray` to hide the widget.
 
 ### Alerts
 
